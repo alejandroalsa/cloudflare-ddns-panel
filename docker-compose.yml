@@ -1,0 +1,23 @@
+services:
+  backend:
+    build: ./backend
+    container_name: ddns-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ddns_data:/app/data
+    ports:
+      - "${BACKEND_PORT:-8000}:8000" # opcional: exponer la API directamente para depurar
+
+  frontend:
+    build: ./frontend
+    container_name: ddns-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+
+volumes:
+  ddns_data:

@@ -1,162 +1,178 @@
-# Cloudflare DDNS Updater
+# Cloudflare DDNS Panel
 
-Actualiza automáticamente los registros DNS con tu IP pública.
+Panel web para gestionar el actualizador de DNS dinámico de Cloudflare: alta de
+dominios, registros, usuarios (admin / solo lectura) y configuración de SMTP,
+todo desde una interfaz web en lugar de editar `config.json` a mano.
 
-## 🚀 Características
-
-- Actualización automática de registros DNS A en Cloudflare
-- Detección inteligente de cambios de IP (solo actualiza cuando es necesario)
-- Soporte para múltiples dominios y zonas con diferentes tokens
-- Servicio de IP pública configurable
-- Notificaciones por email cuando cambia la IP
-- Logging detallado de todas las operaciones
-- Configuración mediante archivos `.env` y JSON
-- Arquitectura modular y escalable
-- Diseñado para ejecutarse como servicio systemd o cron job
-- Mínimas dependencias
-
-## 📁 Estructura del Proyecto
+## 📁 Estructura
 
 ```
-cloudflare-ddns-updater/
-├── LICENSE                         # Licencia del proyecto (MIT)
-├── README.md                       # Documentación principal
-├── .gitignore                      # Archivos ignorados por Git
-└── src
-    ├── cloudflare-ddns.py          # Script principal del DDNS
-    ├── send_email.py               # Envío de notificaciones por email
-    ├── config
-    │   ├── config.json             # Configuración real
-    │   └── config.json.example     # Ejemplo de configuración
-    ├── service
-    │   ├── cloudflare-ddns.service         # Servicio systemd
-    │   └── cloudflare-ddns.service.example # Plantilla de ejemplo
-    └── templates
-        └── email.html              # Plantilla HTML para emails
+cloudflare-ddns-panel/
+├── backend/                # API FastAPI + SQLite + scheduler DDNS
+│   ├── app/
+│   │   ├── main.py         # arranque, crea tablas y usuario admin inicial
+│   │   ├── models.py       # User, Zone, Record, Setting, UpdateLog
+│   │   ├── scheduler.py    # sustituye al bucle while de cloudflare-ddns.py
+│   │   ├── routers/        # /api/auth /api/users /api/zones /api/settings /api/status
+│   │   └── ...
+│   ├── templates/email.html
+│   ├── requirements.txt
+│   ├── .env.example
+│   └── Dockerfile
+├── frontend/                # Vue 3 + Vite + Tailwind + componentes estilo shadcn-vue
+│   ├── src/
+│   │   ├── views/           # Login, Dashboard, Domains, Settings, Users
+│   │   ├── components/ui/   # Button, Input, Card, Dialog, Badge...
+│   │   └── ...
+│   ├── Dockerfile
+│   └── nginx.conf
+├── docker-compose.yml
+└── docs/systemd/             # plantillas para correr sin Docker
 ```
 
-## 📋 Requisitos
+## 🔑 Conceptos clave
 
-- Python 3.7 o superior
-- Cuenta de Cloudflare con acceso a la API
-- Token de API de Cloudflare con permisos de edición de DNS
+- **Ya no existe `config.json`.** Los dominios, registros, usuarios y ajustes
+  viven en una base de datos SQLite (`backend/data/ddns.db`), gestionable
+  desde el panel.
+- **Roles de usuario**: `admin` (gestiona dominios, usuarios y ajustes) y
+  `viewer` (solo puede ver dashboard y dominios).
+- **El scheduler sigue funcionando igual que antes** (comprueba la IP pública
+  cada X segundos y actualiza los registros A en Cloudflare), pero ahora corre
+  integrado en el proceso del backend y lee la configuración de la base de
+  datos en lugar de ficheros.
+- Al arrancar por primera vez se crea automáticamente un usuario admin con las
+  credenciales de `ADMIN_USERNAME` / `ADMIN_PASSWORD` (por defecto
+  `admin` / `admin`). **Cámbialas en el primer login.**
 
-## 🔧 Instalación
+## ✨ Funcionalidades del panel
 
-### 1. Clonar el repositorio
+- **Comprobación manual**: botón "Comprobar ahora" a nivel global (Dashboard),
+  por dominio y por registro individual (vista Dominios) — no hace falta
+  esperar al intervalo automático.
+- **Edición manual de IP y proxy**: cada registro tiene un botón de lápiz para
+  fijar directamente una IP y activar/desactivar la nube de Cloudflare
+  (proxied), sin pasar por la comprobación automática.
+- **Historial borrable**: botón para vaciar el log de comprobaciones desde el
+  Dashboard.
+- **Múltiples destinatarios de email**: en Ajustes puedes indicar varios
+  destinatarios (Para), CC y CCO, separados por comas.
+- **Mostrar/ocultar contraseñas y tokens**: icono de ojo en los campos de
+  contraseña (login, usuarios, SMTP) y en el API Token de Cloudflare.
+- **Acordeón de registros por dominio**: cada dominio se puede expandir o
+  colapsar; los que tienen pocos registros se muestran abiertos por defecto,
+  el resto colapsados, para no saturar la vista si tienes muchos.
+- **Buscador de dominios/registros**: filtra en vivo por nombre de dominio o
+  de registro en la vista Dominios.
+- **Mi perfil**: cualquier usuario puede cambiar su propio nombre de usuario,
+  email y contraseña desde "Mi perfil" (en el menú lateral), sin necesitar
+  permisos de admin.
+- **Badges con icono**: los estados (proxied/DNS only, OK/pendiente,
+  actualizado/error/sin cambios, activo/deshabilitado, admin/solo lectura)
+  muestran un icono junto al texto para identificarlos de un vistazo.
+
+---
+
+## 🐳 Opción A: Despliegue con Docker (recomendado)
+
+1. Configura las variables de entorno del backend:
+
+   ```bash
+   cp backend/.env.example backend/.env
+   nano backend/.env   # cambia JWT_SECRET, ADMIN_PASSWORD, etc.
+   ```
+
+2. Levanta todo:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+3. Abre `http://<tu-servidor>` (puerto 80, servido por el frontend/Nginx, que
+   redirige `/api` al backend). Inicia sesión con el usuario admin definido en
+   `.env`.
+
+4. Los datos persisten en el volumen `ddns_data` (SQLite), aunque
+   reconstruyas los contenedores.
+
+Comandos útiles:
 
 ```bash
-git clone https://github.com/alejandroalsa/cloudflare-ddns-updater.git
-cd cloudflare-ddns-updater
+docker compose logs -f backend   # ver logs del scheduler / actualizaciones
+docker compose restart backend
+docker compose down              # detener (los datos persisten en el volumen)
 ```
 
-### 2. Configurar variables de entorno
+---
+
+## 🖥️ Opción B: Como servicio systemd (sin Docker)
+
+### 1. Backend
 
 ```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 cp .env.example .env
-nano .env
+nano .env   # ajusta JWT_SECRET, ADMIN_PASSWORD, DATABASE_URL si quieres otra ruta
 ```
 
-### 3. Configurar dominios
+Copia y ajusta el servicio:
 
 ```bash
-cp src/config/config.json.example src/config/config.json
-nano src/config/config.json
+sudo cp ../docs/systemd/ddns-backend.service /etc/systemd/system/
+sudo nano /etc/systemd/system/ddns-backend.service   # revisa rutas y usuario
+sudo systemctl daemon-reload
+sudo systemctl enable --now ddns-backend
+sudo systemctl status ddns-backend
 ```
+
+### 2. Frontend (build estático)
+
+```bash
+cd frontend
+npm install
+npm run build   # genera frontend/dist
+```
+
+Sirve `frontend/dist` con cualquier servidor web. Tienes una plantilla lista
+en `docs/systemd/nginx-ddns-panel.conf.example` que sirve los estáticos y
+redirige `/api` al backend (puerto 8000):
+
+```bash
+sudo cp docs/systemd/nginx-ddns-panel.conf.example /etc/nginx/sites-available/ddns-panel
+sudo nano /etc/nginx/sites-available/ddns-panel   # ajusta server_name y rutas
+sudo ln -s /etc/nginx/sites-available/ddns-panel /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+---
 
 ## ☁️ Obtener credenciales de Cloudflare
 
-### 1. Token de API
+Igual que antes: **My Profile → API Tokens** en el dashboard de Cloudflare,
+con permisos `Zone.DNS:Edit` y `Zone.Zone:Read`. El Zone ID se obtiene desde
+la sección **API** de cada dominio en el dashboard. Ahora simplemente los
+introduces desde el panel al crear un dominio nuevo, en vez de editar
+`config.json`.
 
-1. Accede a [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. Ve a **My Profile** → **API Tokens**
-3. Crea un nuevo token con estos permisos:
-   - **Zone.DNS:Edit** (obligatorio)
-   - **Zone.Zone:Read** (recomendado)
-4. Selecciona las zonas específicas o todas las zonas
-5. Copia el token generado
+## 🔄 Migrar desde config.json
 
-### 2. Zone ID
+Si ya tenías un `config.json` con dominios configurados, entra al panel como
+admin → **Dominios** → **Nuevo dominio**, e introduce para cada entrada de
+`config.json`: el dominio, su `zone_id`, `api_token` y la lista de `records`.
+No hace falta migrar nada a mano en la base de datos.
 
-1. En el Dashboard de Cloudflare, selecciona tu dominio
-2. Desplázate a la sección **API** en la barra lateral derecha
-3. Copia el **Zone ID**
+## 🔐 Notas de seguridad
 
-## 🏃 Uso
-
-### Ejecución manual (una vez)
-
-```bash
-python3 src/cloudflare-ddns.py
-```
-
-O desde la raíz del proyecto:
-
-```bash
-cd cloudflare-ddns-updater
-python3 src/cloudflare-ddns.py
-```
-
-### Modo verbose (debug)
-
-```bash
-python3 src/cloudflare-ddns.py -v
-```
-
-## 🔄 Configuración como servicio
-
-### Ejecutar como servicio systemd (recomendado para producción)
-
-1. Copia el archivo de servicio:
-
-```bash
-sudo cp src/service/cloudflare-ddns.service /etc/systemd/system/
-```
-
-1. Edita las rutas y valores en el archivo de servicio según tu instalación:
-
-```bash
-sudo nano /etc/systemd/system/cloudflare-ddns.service
-```
-
-1. Habilita e inicia el servicio:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable cloudflare-ddns
-sudo systemctl start cloudflare-ddns
-```
-
-1. Verifica el estado:
-
-```bash
-sudo systemctl status cloudflare-ddns
-```
-
-1. Ver logs del servicio:
-
-```bash
-sudo journalctl -u cloudflare-ddns -f
-```
-
-1. Otros comandos útiles:
-
-```bash
-# Detener el servicio
-sudo systemctl stop cloudflare-ddns
-
-# Reiniciar el servicio
-sudo systemctl restart cloudflare-ddns
-
-# Deshabilitar el servicio
-sudo systemctl disable cloudflare-ddns
-
-# Ver logs de las últimas 100 líneas
-sudo journalctl -u cloudflare-ddns -n 100
-```
+- Cambia `JWT_SECRET` y la contraseña del admin por defecto antes de exponer
+  el panel a Internet.
+- Los tokens de API de Cloudflare se guardan en la base de datos; protege el
+  acceso al fichero `ddns.db` / al volumen Docker.
+- Se recomienda poner el panel detrás de HTTPS (por ejemplo con un reverse
+  proxy tipo Caddy/Traefik o certificados de Let's Encrypt en tu Nginx).
 
 ## 📝 Licencia
 
-Este proyecto está bajo la Licencia MIT. Ver el archivo [LICENSE](LICENSE) para más detalles.
-
-⭐ Si este proyecto te ha sido útil, considera darle una estrella en GitHub
+MIT, igual que el proyecto original.
