@@ -11,10 +11,12 @@ import CardHeader from "@/components/ui/CardHeader.vue";
 import CardTitle from "@/components/ui/CardTitle.vue";
 import CardDescription from "@/components/ui/CardDescription.vue";
 import CardContent from "@/components/ui/CardContent.vue";
-import { LogIn, ExternalLink } from "lucide-vue-next";
+import { LogIn, ExternalLink, ShieldCheck } from "lucide-vue-next";
 
 const username = ref("");
 const password = ref("");
+const totpCode = ref("");
+const needsTotp = ref(false);
 const error = ref("");
 const loading = ref(false);
 
@@ -25,8 +27,12 @@ async function onSubmit() {
   error.value = "";
   loading.value = true;
   try {
-    await auth.login(username.value, password.value);
-    router.push("/");
+    const done = await auth.login(username.value, password.value, totpCode.value || undefined);
+    if (done) {
+      router.push("/");
+    } else {
+      needsTotp.value = true;
+    }
   } catch (e: any) {
     error.value = e?.response?.data?.detail || "No se pudo iniciar sesión";
   } finally {
@@ -41,10 +47,12 @@ async function onSubmit() {
       <CardHeader class="items-center text-center">
         <img src="/logo.svg" alt="Cloudflare DDNS Panel" class="mb-2 h-12 w-12" />
         <CardTitle>Cloudflare DDNS Panel</CardTitle>
-        <CardDescription>Inicia sesión para gestionar tus dominios</CardDescription>
+        <CardDescription>
+          {{ needsTotp ? "Introduce el código de tu app de autenticación" : "Inicia sesión para gestionar tus dominios" }}
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <form class="space-y-4" @submit.prevent="onSubmit">
+        <form v-if="!needsTotp" class="space-y-4" @submit.prevent="onSubmit">
           <div class="space-y-1.5">
             <Label for="username">Usuario</Label>
             <Input id="username" v-model="username" autocomplete="username" required />
@@ -62,6 +70,18 @@ async function onSubmit() {
           <Button type="submit" class="w-full" :disabled="loading">
             <LogIn class="h-4 w-4" />
             {{ loading ? "Entrando..." : "Entrar" }}
+          </Button>
+        </form>
+
+        <form v-else class="space-y-4" @submit.prevent="onSubmit">
+          <div class="space-y-1.5">
+            <Label for="totp">Código de verificación</Label>
+            <Input id="totp" v-model="totpCode" inputmode="numeric" maxlength="6" autofocus placeholder="123456" required />
+          </div>
+          <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
+          <Button type="submit" class="w-full" :disabled="loading">
+            <ShieldCheck class="h-4 w-4" />
+            {{ loading ? "Verificando..." : "Verificar" }}
           </Button>
         </form>
       </CardContent>

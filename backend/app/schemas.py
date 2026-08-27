@@ -13,6 +13,28 @@ class Token(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    totp_code: Optional[str] = None
+
+
+class LoginResponse(BaseModel):
+    access_token: Optional[str] = None
+    token_type: str = "bearer"
+    totp_required: bool = False
+
+
+# ---------- 2FA ----------
+class TwoFASetupOut(BaseModel):
+    secret: str
+    otpauth_url: str
+    qr_code_base64: str
+
+
+class TwoFAConfirmRequest(BaseModel):
+    code: str
+
+
+class TwoFADisableRequest(BaseModel):
+    password: str
 
 
 # ---------- Users ----------
@@ -46,11 +68,13 @@ class UserOut(UserBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     created_at: dt.datetime
+    totp_enabled: bool = False
 
 
 # ---------- Records ----------
 class RecordBase(BaseModel):
     name: str
+    type: str = "A"  # "A" o "AAAA"
 
 
 class RecordCreate(RecordBase):
@@ -64,11 +88,13 @@ class RecordOut(RecordBase):
     last_ip: Optional[str] = None
     last_updated: Optional[dt.datetime] = None
     proxied: Optional[bool] = None
+    ttl: Optional[int] = None
 
 
 class RecordManualUpdate(BaseModel):
     ip: str
     proxied: Optional[bool] = None
+    ttl: Optional[int] = None  # None = automático
 
 
 # ---------- Zones ----------
@@ -79,7 +105,7 @@ class ZoneBase(BaseModel):
 
 class ZoneCreate(ZoneBase):
     api_token: str
-    records: List[str] = []  # nombres de subdominios iniciales
+    records: List[str] = []  # nombres de subdominios iniciales (tipo A por defecto)
 
 
 class ZoneUpdate(BaseModel):
@@ -96,12 +122,27 @@ class ZoneOut(ZoneBase):
     api_token_preview: Optional[str] = None
 
 
+class TestConnectionRequest(BaseModel):
+    api_token: str
+    zone_id: str
+
+
+class TestConnectionResult(BaseModel):
+    ok: bool
+    zone_name: Optional[str] = None
+    message: Optional[str] = None
+
+
 # ---------- Settings ----------
 class SettingsPayload(BaseModel):
     update_interval: int = 300
     public_ip_service: str = "https://api.ipify.org"
     app_debug: bool = False
     debug_ip: Optional[str] = None
+
+    enable_ipv6: bool = False
+    public_ipv6_service: str = "https://api6.ipify.org"
+    debug_ipv6: Optional[str] = None
 
     mail_host: Optional[str] = None
     mail_port: int = 465
@@ -112,6 +153,11 @@ class SettingsPayload(BaseModel):
     notification_email: Optional[str] = None       # "To" - varios separados por coma
     notification_cc: Optional[str] = None          # CC - varios separados por coma
     notification_bcc: Optional[str] = None         # CCO - varios separados por coma
+
+
+class TestEmailResult(BaseModel):
+    ok: bool
+    message: str
 
 
 # ---------- Status / Logs ----------
@@ -134,6 +180,30 @@ class StatusOut(BaseModel):
     total_zones: int
     total_records: int
     recent_logs: List[UpdateLogOut]
+
+
+class PaginatedLogs(BaseModel):
+    items: List[UpdateLogOut]
+    total: int
+    page: int
+    page_size: int
+
+
+# ---------- Auditoría ----------
+class AuditLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    timestamp: dt.datetime
+    username: Optional[str]
+    action: str
+    details: Optional[str]
+
+
+class PaginatedAudit(BaseModel):
+    items: List[AuditLogOut]
+    total: int
+    page: int
+    page_size: int
 
 
 # ---------- Import / Export (formato compatible con el antiguo config.json) ----------

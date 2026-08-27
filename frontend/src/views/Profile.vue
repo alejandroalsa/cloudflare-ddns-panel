@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
-import { api } from "@/lib/api";
+import { api, type TwoFASetup } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import AppLayout from "@/components/AppLayout.vue";
 import Card from "@/components/ui/Card.vue";
@@ -13,8 +13,9 @@ import Input from "@/components/ui/Input.vue";
 import PasswordInput from "@/components/ui/PasswordInput.vue";
 import Label from "@/components/ui/Label.vue";
 import Badge from "@/components/ui/Badge.vue";
+import Dialog from "@/components/ui/Dialog.vue";
 import ThemeToggle from "@/components/ui/ThemeToggle.vue";
-import { ShieldCheck, Eye, UserCircle, Save, Palette } from "lucide-vue-next";
+import { ShieldCheck, Eye, UserCircle, Save, Palette, Smartphone, X, Check } from "lucide-vue-next";
 
 const auth = useAuthStore();
 
@@ -47,6 +48,63 @@ async function save() {
     error.value = e?.response?.data?.detail || "No se pudo actualizar el perfil";
   } finally {
     saving.value = false;
+  }
+}
+
+// ---------- 2FA ----------
+const showSetupDialog = ref(false);
+const setupData = ref<TwoFASetup | null>(null);
+const confirmCode = ref("");
+const setupError = ref("");
+const settingUp2fa = ref(false);
+const confirming2fa = ref(false);
+
+const showDisableDialog = ref(false);
+const disablePassword = ref("");
+const disableError = ref("");
+const disabling2fa = ref(false);
+
+async function startSetup2fa() {
+  settingUp2fa.value = true;
+  setupError.value = "";
+  confirmCode.value = "";
+  try {
+    const { data } = await api.post<TwoFASetup>("/auth/2fa/setup");
+    setupData.value = data;
+    showSetupDialog.value = true;
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail || "No se pudo iniciar la configuración de 2FA";
+  } finally {
+    settingUp2fa.value = false;
+  }
+}
+
+async function confirmSetup2fa() {
+  confirming2fa.value = true;
+  setupError.value = "";
+  try {
+    await api.post("/auth/2fa/confirm", { code: confirmCode.value });
+    await auth.fetchMe();
+    showSetupDialog.value = false;
+  } catch (e: any) {
+    setupError.value = e?.response?.data?.detail || "Código incorrecto";
+  } finally {
+    confirming2fa.value = false;
+  }
+}
+
+async function disable2fa() {
+  disabling2fa.value = true;
+  disableError.value = "";
+  try {
+    await api.post("/auth/2fa/disable", { password: disablePassword.value });
+    await auth.fetchMe();
+    showDisableDialog.value = false;
+    disablePassword.value = "";
+  } catch (e: any) {
+    disableError.value = e?.response?.data?.detail || "No se pudo desactivar";
+  } finally {
+    disabling2fa.value = false;
   }
 }
 
@@ -97,6 +155,30 @@ onMounted(loadFromStore);
 
     <Card class="mt-6 max-w-lg">
       <CardHeader>
+        <CardTitle class="flex items-center gap-2"><Smartphone class="h-4 w-4" /> Verificación en dos pasos (2FA)</CardTitle>
+        <CardDescription>Añade una capa extra de seguridad con una app de autenticación (Google Authenticator, Authy...)</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="flex items-center justify-between rounded-[5px] border px-3 py-2">
+          <Badge v-if="auth.user?.totp_enabled" variant="success" class="gap-1">
+            <ShieldCheck class="h-3.5 w-3.5" /> Activada
+          </Badge>
+          <Badge v-else variant="secondary" class="gap-1">
+            <Smartphone class="h-3.5 w-3.5" /> Desactivada
+          </Badge>
+
+          <Button v-if="!auth.user?.totp_enabled" size="sm" :disabled="settingUp2fa" @click="startSetup2fa">
+            {{ settingUp2fa ? "Generando..." : "Activar 2FA" }}
+          </Button>
+          <Button v-else size="sm" variant="destructive" @click="showDisableDialog = true">
+            Desactivar 2FA
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card class="mt-6 max-w-lg">
+      <CardHeader>
         <CardTitle class="flex items-center gap-2"><Palette class="h-4 w-4" /> Apariencia</CardTitle>
         <CardDescription>Elige cómo se ve el panel en este navegador.</CardDescription>
       </CardHeader>
@@ -104,5 +186,61 @@ onMounted(loadFromStore);
         <ThemeToggle />
       </CardContent>
     </Card>
+
+    <!-- Diálogo: activar 2FA -->
+    <Dialog v-model:open="showSetupDialog">
+      <h2 class="mb-1 text-lg font-semibold">Activar verificación en dos pasos</h2>
+      <p class="mb-4 text-sm text-muted-foreground">
+        Escanea este código QR con tu app de autenticación y luego introduce el código de 6
+        dígitos para confirmar.
+      </p>
+      <div v-if="setupData" class="space-y-4">
+        <div class="flex justify-center rounded-[5px] border p-4">
+          <img :src="setupData.qr_code_base64" alt="Código QR 2FA" class="h-48 w-48" />
+        </div>
+        <div class="space-y-1.5">
+          <Label class="text-xs">¿No puedes escanear? Introduce este código manualmente:</Label>
+          <Input :model-value="setupData.secret" readonly class="font-mono text-xs" />
+        </div>
+        <form class="space-y-3" @submit.prevent="confirmSetup2fa">
+          <div class="space-y-1.5">
+            <Label>Código de 6 dígitos</Label>
+            <Input v-model="confirmCode" inputmode="numeric" maxlength="6" placeholder="123456" required />
+          </div>
+          <p v-if="setupError" class="text-sm text-destructive">{{ setupError }}</p>
+          <div class="flex justify-end gap-2">
+            <Button type="button" variant="outline" @click="showSetupDialog = false">
+              <X class="h-4 w-4" /> Cancelar
+            </Button>
+            <Button type="submit" :disabled="confirming2fa">
+              <Check class="h-4 w-4" /> {{ confirming2fa ? "Verificando..." : "Confirmar" }}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </Dialog>
+
+    <!-- Diálogo: desactivar 2FA -->
+    <Dialog v-model:open="showDisableDialog">
+      <h2 class="mb-1 text-lg font-semibold">Desactivar verificación en dos pasos</h2>
+      <p class="mb-4 text-sm text-muted-foreground">
+        Introduce tu contraseña para confirmar que quieres desactivar el 2FA de tu cuenta.
+      </p>
+      <form class="space-y-4" @submit.prevent="disable2fa">
+        <div class="space-y-1.5">
+          <Label>Contraseña</Label>
+          <PasswordInput v-model="disablePassword" required />
+        </div>
+        <p v-if="disableError" class="text-sm text-destructive">{{ disableError }}</p>
+        <div class="flex justify-end gap-2">
+          <Button type="button" variant="outline" @click="showDisableDialog = false">
+            <X class="h-4 w-4" /> Cancelar
+          </Button>
+          <Button type="submit" variant="destructive" :disabled="disabling2fa">
+            {{ disabling2fa ? "Desactivando..." : "Desactivar" }}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   </AppLayout>
 </template>

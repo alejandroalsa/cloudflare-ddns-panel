@@ -15,7 +15,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error?.response?.status === 401) {
+    if (error?.response?.status === 401 && !error?.config?.url?.includes("/auth/login")) {
       localStorage.removeItem("ddns_token");
       localStorage.removeItem("ddns_user");
       if (window.location.pathname !== "/login") {
@@ -36,15 +36,20 @@ export interface User {
   role: UserRole;
   is_active: boolean;
   created_at: string;
+  totp_enabled: boolean;
 }
+
+export type RecordType = "A" | "AAAA";
 
 export interface Record {
   id: number;
   zone_id: number;
   name: string;
+  type: RecordType;
   last_ip: string | null;
   last_updated: string | null;
   proxied: boolean | null;
+  ttl: number | null;
 }
 
 export interface Zone {
@@ -56,11 +61,20 @@ export interface Zone {
   api_token_preview: string | null;
 }
 
+export interface TestConnectionResult {
+  ok: boolean;
+  zone_name: string | null;
+  message: string | null;
+}
+
 export interface SettingsPayload {
   update_interval: number;
   public_ip_service: string;
   app_debug: boolean;
   debug_ip: string | null;
+  enable_ipv6: boolean;
+  public_ipv6_service: string;
+  debug_ipv6: string | null;
   mail_host: string | null;
   mail_port: number;
   mail_username: string | null;
@@ -70,6 +84,11 @@ export interface SettingsPayload {
   notification_email: string | null;
   notification_cc: string | null;
   notification_bcc: string | null;
+}
+
+export interface TestEmailResult {
+  ok: boolean;
+  message: string;
 }
 
 export interface UpdateLog {
@@ -90,6 +109,36 @@ export interface StatusOut {
   total_zones: number;
   total_records: number;
   recent_logs: UpdateLog[];
+}
+
+export interface PaginatedLogs {
+  items: UpdateLog[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+// ---------- Auditoría ----------
+export interface AuditLogEntry {
+  id: number;
+  timestamp: string;
+  username: string | null;
+  action: string;
+  details: string | null;
+}
+
+export interface PaginatedAudit {
+  items: AuditLogEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+// ---------- 2FA ----------
+export interface TwoFASetup {
+  secret: string;
+  otpauth_url: string;
+  qr_code_base64: string;
 }
 
 // ---------- Import / Export ----------

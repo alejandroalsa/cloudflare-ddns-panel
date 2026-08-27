@@ -70,6 +70,52 @@ cloudflare-ddns-panel/
 - **Badges con icono**: los estados (proxied/DNS only, OK/pendiente,
   actualizado/error/sin cambios, activo/deshabilitado, admin/solo lectura)
   muestran un icono junto al texto para identificarlos de un vistazo.
+- **Tema claro/oscuro/sistema**: selector en el sidebar y en el login;
+  respeta el tema del sistema operativo si se deja en "Sistema" y se guarda
+  la preferencia en el navegador.
+- **Edición completa de usuarios**: los admins pueden editar usuario, email,
+  contraseña, rol y estado de cualquier cuenta ya creada (antes solo se podía
+  cambiar el rol o activar/desactivar).
+- **Confirmación en todas las acciones de borrado**: eliminar un dominio, un
+  registro, un usuario o el historial siempre pide confirmación mediante un
+  diálogo, nunca se borra con un solo clic.
+- **Import / export de dominios en JSON**: botón para descargar una plantilla
+  de ejemplo, importar un JSON (mismo formato que el antiguo `config.json`,
+  crea o actualiza dominios) y exportar todos los dominios o uno solo a JSON
+  como copia de seguridad.
+- **Identidad visual**: color de marca `#004BC3`, logo y favicon propios,
+  radio de borde de 5px en tarjetas, botones, campos y badges.
+- **Responsive**: en móvil la barra lateral se oculta y se sustituye por una
+  barra superior con menú desplegable (drawer); en escritorio se mantiene el
+  sidebar fijo.
+- **Tema por cuenta**: la preferencia de tema (claro/oscuro/sistema) se
+  configura desde "Mi perfil" y solo se aplica con sesión iniciada; sin
+  sesión (pantalla de login) siempre se usa el tema del sistema operativo.
+- **Sidebar fijo**: en escritorio el menú lateral no se desplaza con el
+  scroll de la página; solo el contenido principal hace scroll.
+- **Probar conexión**: al crear un dominio, botón para validar el API Token
+  y Zone ID contra Cloudflare antes de guardar.
+- **Email de prueba**: botón en Ajustes para verificar la configuración SMTP
+  sin esperar a un cambio real de IP.
+- **Gráfica de evolución de IP**: en el Dashboard, visualiza cuándo ha
+  cambiado tu IP pública en las últimas comprobaciones.
+- **Registro de auditoría**: nueva sección "Auditoría" (solo admin) con quién
+  hizo qué acción y cuándo (crear/editar/borrar dominios, registros,
+  usuarios, ajustes, checks manuales, login, 2FA...).
+- **Historial paginado con filtro de fechas**: tanto el historial de
+  comprobaciones (Dashboard) como la auditoría permiten filtrar por rango de
+  fechas y navegar por páginas.
+- **Registros AAAA (IPv6)**: además de A, cada registro puede ser de tipo
+  AAAA; actívalo en Ajustes → IPv6 y añade el registro con tipo AAAA desde
+  Dominios.
+- **TTL editable**: al editar manualmente un registro puedes fijar un TTL
+  concreto o dejarlo en automático.
+- **Límite de intentos de login**: tras 5 intentos fallidos con el mismo
+  usuario, se bloquea el login durante 15 minutos (en memoria, se reinicia
+  si el backend se reinicia).
+- **2FA (verificación en dos pasos)**: cada usuario puede activar 2FA con
+  una app de autenticación (Google Authenticator, Authy...) desde
+  "Mi perfil", con código QR y confirmación.
 
 ---
 
@@ -164,6 +210,61 @@ admin → **Dominios** → **Nuevo dominio**, e introduce para cada entrada de
 `config.json`: el dominio, su `zone_id`, `api_token` y la lista de `records`.
 No hace falta migrar nada a mano en la base de datos.
 
+## ⚠️ Migración de base de datos (si ya tenías el panel desplegado)
+
+Esta versión añade columnas nuevas a tablas ya existentes y una tabla nueva.
+`create_all()` de SQLAlchemy **crea tablas nuevas automáticamente pero NO
+añade columnas a tablas que ya existen**, así que si tu `ddns.db` ya tenía
+datos de una versión anterior, necesitas aplicar esta migración una vez
+antes de arrancar:
+
+```bash
+docker compose down
+docker compose run --rm backend python3 -c "
+import sqlite3
+conn = sqlite3.connect('/app/data/ddns.db')
+cur = conn.cursor()
+cur.execute('ALTER TABLE records ADD COLUMN type VARCHAR(10) DEFAULT \"A\"')
+cur.execute('ALTER TABLE records ADD COLUMN ttl INTEGER')
+cur.execute('ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64)')
+cur.execute('ALTER TABLE users ADD COLUMN totp_enabled BOOLEAN DEFAULT 0')
+conn.commit()
+conn.close()
+print('Migración aplicada correctamente')
+"
+docker compose up -d --build
+```
+
+Si alguna columna ya existiera (por ejemplo porque partes de cero), verás un
+error `duplicate column name` para esa línea concreta — no pasa nada, ignóralo
+y comprueba que el resto se aplicó con:
+
+```bash
+docker compose run --rm backend python3 -c "
+import sqlite3
+conn = sqlite3.connect('/app/data/ddns.db')
+cur = conn.cursor()
+cur.execute('PRAGMA table_info(records)'); print('records:', cur.fetchall())
+cur.execute('PRAGMA table_info(users)'); print('users:', cur.fetchall())
+conn.close()
+"
+```
+
+La tabla `audit_logs` es completamente nueva, así que **no** necesita
+`ALTER TABLE` — `create_all()` la crea sola en el primer arranque.
+
+## 🔑 Notas sobre 2FA y límite de login
+
+- El límite de intentos de login (5 fallos → bloqueo 15 min) se guarda **en
+  memoria del proceso**, no en la base de datos. Si reinicias el contenedor
+  del backend, los contadores se resetean.
+- El 2FA usa TOTP estándar (compatible con Google Authenticator, Authy,
+  1Password, etc.). No hay códigos de recuperación implementados: si un
+  usuario pierde el acceso a su app de autenticación, un admin puede
+  desactivarle el 2FA manualmente actualizando la fila en `users` (columna
+  `totp_enabled` a `0`) desde `sqlite3`, ya que el endpoint de desactivación
+  requiere la contraseña del propio usuario.
+
 ## 🔐 Notas de seguridad
 
 - Cambia `JWT_SECRET` y la contraseña del admin por defecto antes de exponer
@@ -176,3 +277,7 @@ No hace falta migrar nada a mano en la base de datos.
 ## 📝 Licencia
 
 MIT, igual que el proyecto original.
+
+---
+
+Creado por [alejandroalsa](https://github.com/alejandroalsa/cloudflare-ddns-updater).

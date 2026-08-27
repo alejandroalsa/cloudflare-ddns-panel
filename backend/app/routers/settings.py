@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_admin
+from ..audit import audit
+from ..email_utils import send_notification_email
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -35,7 +37,7 @@ def get_settings(db: Session = Depends(get_db), _: models.User = Depends(get_cur
 def update_settings(
     payload: schemas.SettingsPayload,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_admin),
 ):
     data = payload.model_dump()
     for key, value in data.items():
@@ -48,6 +50,8 @@ def update_settings(
             row.value = str_value
         else:
             db.add(models.Setting(key=key, value=str_value))
+
+    audit(db, current_user.username, "settings_update", "Actualizó la configuración global")
     db.commit()
 
     if data.get("update_interval"):
@@ -55,3 +59,20 @@ def update_settings(
         reschedule(data["update_interval"])
 
     return schemas.SettingsPayload(**_get_all(db))
+
+
+@router.post("/test-email", response_model=schemas.TestEmailResult)
+def test_email(db: Session = Depends(get_db), current_user: models.User = Depends(require_admin)):
+    settings_dict = _get_all(db)
+    try:
+        send_notification_email(
+            settings_dict,
+            old_ip="192.0.2.1",
+            new_ip="192.0.2.2",
+            domains=["prueba.ejemplo.com"],
+        )
+        audit(db, current_user.username, "test_email", "Envió un email de prueba")
+        db.commit()
+        return schemas.TestEmailResult(ok=True, message=f"Correo de prueba enviado a {settings_dict.get('notification_email')}")
+    except Exception as e:
+        return schemas.TestEmailResult(ok=False, message=str(e))

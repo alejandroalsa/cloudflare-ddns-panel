@@ -51,8 +51,8 @@ const mobileMenuOpen = ref(false);
       </Transition>
     </Teleport>
 
-    <!-- Sidebar: solo desktop -->
-    <aside class="hidden w-64 shrink-0 flex-col border-r bg-card px-4 py-6 md:flex">
+    <!-- Sidebar: solo desktop, fijo (no se desplaza con el scroll de la página) -->
+    <aside class="hidden w-64 shrink-0 flex-col border-r bg-card px-4 py-6 md:fixed md:inset-y-0 md:left-0 md:flex md:overflow-y-auto">
       <div class="mb-6 flex items-center gap-2 px-2">
         <img src="/logo.svg" alt="Cloudflare DDNS Panel" class="h-7 w-7" />
         <span class="text-lg font-semibold">DDNS Panel</span>
@@ -60,7 +60,7 @@ const mobileMenuOpen = ref(false);
       <SidebarContent />
     </aside>
 
-    <main class="min-w-0 flex-1 overflow-x-hidden bg-muted/30 p-4 sm:p-6 md:p-8">
+    <main class="min-w-0 flex-1 overflow-x-hidden bg-muted/30 p-4 sm:p-6 md:ml-64 md:p-8">
       <slot />
     </main>
   </div>

@@ -10,3 +10,5 @@ python-multipart==0.0.9
 APScheduler==3.10.4
 requests==2.32.3
 python-dotenv==1.0.1
+pyotp==2.9.0
+qrcode[pil]==7.4.2

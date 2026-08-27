@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
-import { api, type StatusOut } from "@/lib/api";
+import { ref, onMounted, watch, nextTick } from "vue";
+import Chart from "chart.js/auto";
+import "chartjs-adapter-date-fns";
+import { api, type StatusOut, type PaginatedLogs } from "@/lib/api";
 import AppLayout from "@/components/AppLayout.vue";
 import Card from "@/components/ui/Card.vue";
 import CardHeader from "@/components/ui/CardHeader.vue";
@@ -9,18 +11,95 @@ import CardDescription from "@/components/ui/CardDescription.vue";
 import CardContent from "@/components/ui/CardContent.vue";
 import Badge from "@/components/ui/Badge.vue";
 import Button from "@/components/ui/Button.vue";
+import Input from "@/components/ui/Input.vue";
+import Label from "@/components/ui/Label.vue";
 import { useAuthStore } from "@/stores/auth";
 import { useConfirm } from "@/lib/confirm";
-import { Wifi, Globe, ListChecks, Clock, RefreshCw, Trash2, XCircle, CheckCircle2, MinusCircle } from "lucide-vue-next";
+import {
+  Wifi,
+  Globe,
+  ListChecks,
+  Clock,
+  RefreshCw,
+  Trash2,
+  XCircle,
+  CheckCircle2,
+  MinusCircle,
+  TrendingUp,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  X,
+} from "lucide-vue-next";
 
 const auth = useAuthStore();
 const { confirmDelete } = useConfirm();
+
 const status = ref<StatusOut | null>(null);
 const loading = ref(true);
 const checking = ref(false);
 const clearingLogs = ref(false);
 const actionError = ref("");
 
+// --- Gráfica de historial de IP ---
+const chartCanvas = ref<HTMLCanvasElement | null>(null);
+let chartInstance: Chart | null = null;
+
+async function loadChart() {
+  const { data } = await api.get("/status/ip-history", { params: { limit: 50 } });
+  if (!chartCanvas.value) return;
+
+  const ipOrder: string[] = [];
+  const points = data
+    .filter((log: any) => log.new_ip)
+    .map((log: any) => {
+      if (!ipOrder.includes(log.new_ip)) ipOrder.push(log.new_ip);
+      return { x: log.timestamp, y: ipOrder.indexOf(log.new_ip), ip: log.new_ip };
+    });
+
+  if (chartInstance) {
+    chartInstance.destroy();
+    chartInstance = null;
+  }
+
+  chartInstance = new Chart(chartCanvas.value, {
+    type: "line",
+    data: {
+      datasets: [
+        {
+          label: "IP pública",
+          data: points,
+          stepped: true,
+          borderColor: "#004BC3",
+          backgroundColor: "#004BC3",
+          pointRadius: 3,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { type: "time", time: { unit: "day" } },
+        y: {
+          ticks: {
+            callback: (value) => ipOrder[value as number] || "",
+          },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx: any) => ctx.raw.ip,
+          },
+        },
+      },
+    },
+  });
+}
+
+// --- Resumen ---
 async function load() {
   loading.value = true;
   const { data } = await api.get<StatusOut>("/status");
@@ -34,6 +113,8 @@ async function checkNow() {
   try {
     await api.post("/status/check");
     await load();
+    await loadChart();
+    await loadLogs();
   } catch (e: any) {
     actionError.value = e?.response?.data?.detail || "No se pudo comprobar la IP";
   } finally {
@@ -51,8 +132,53 @@ async function clearHistory() {
   try {
     await api.delete("/status/logs");
     await load();
+    await loadChart();
+    await loadLogs();
   } finally {
     clearingLogs.value = false;
+  }
+}
+
+// --- Historial paginado con filtro de fechas ---
+const logs = ref<PaginatedLogs | null>(null);
+const page = ref(1);
+const pageSize = 10;
+const startDate = ref("");
+const endDate = ref("");
+
+async function loadLogs() {
+  const params: Record<string, string | number> = { page: page.value, page_size: pageSize };
+  if (startDate.value) params.start_date = startDate.value;
+  if (endDate.value) params.end_date = endDate.value;
+  const { data } = await api.get<PaginatedLogs>("/status/logs", { params });
+  logs.value = data;
+}
+
+function applyFilter() {
+  page.value = 1;
+  loadLogs();
+}
+
+function clearFilter() {
+  startDate.value = "";
+  endDate.value = "";
+  page.value = 1;
+  loadLogs();
+}
+
+function nextPage() {
+  if (!logs.value) return;
+  const totalPages = Math.ceil(logs.value.total / logs.value.page_size);
+  if (page.value < totalPages) {
+    page.value++;
+    loadLogs();
+  }
+}
+
+function prevPage() {
+  if (page.value > 1) {
+    page.value--;
+    loadLogs();
   }
 }
 
@@ -77,7 +203,12 @@ const sourceLabels: Record<string, string> = {
   manual_record: "Manual (registro)",
 };
 
-onMounted(load);
+onMounted(async () => {
+  await load();
+  await nextTick();
+  await loadChart();
+  await loadLogs();
+});
 </script>
 
 <template>
@@ -131,13 +262,25 @@ onMounted(load);
     </div>
 
     <Card class="mt-6">
-      <CardHeader class="flex-row items-center justify-between space-y-0">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2"><TrendingUp class="h-4 w-4" /> Evolución de la IP</CardTitle>
+        <CardDescription>Últimas 50 comprobaciones con IP registrada</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="h-64">
+          <canvas ref="chartCanvas"></canvas>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card class="mt-6">
+      <CardHeader class="flex-col items-start gap-4 space-y-0 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <CardTitle class="flex items-center gap-2"><Clock class="h-4 w-4" /> Historial reciente</CardTitle>
-          <CardDescription>Últimas comprobaciones de IP</CardDescription>
+          <CardTitle class="flex items-center gap-2"><Clock class="h-4 w-4" /> Historial de comprobaciones</CardTitle>
+          <CardDescription>Filtra por rango de fechas o navega por páginas</CardDescription>
         </div>
         <Button
-          v-if="auth.isAdmin && status?.recent_logs?.length"
+          v-if="auth.isAdmin && status?.total_records"
           variant="ghost"
           size="sm"
           :disabled="clearingLogs"
@@ -148,6 +291,23 @@ onMounted(load);
         </Button>
       </CardHeader>
       <CardContent>
+        <div class="mb-4 flex flex-wrap items-end gap-3">
+          <div class="space-y-1.5">
+            <Label class="text-xs">Desde</Label>
+            <Input v-model="startDate" type="date" class="h-9" />
+          </div>
+          <div class="space-y-1.5">
+            <Label class="text-xs">Hasta</Label>
+            <Input v-model="endDate" type="date" class="h-9" />
+          </div>
+          <Button size="sm" variant="outline" @click="applyFilter">
+            <Filter class="h-4 w-4" /> Filtrar
+          </Button>
+          <Button v-if="startDate || endDate" size="sm" variant="ghost" @click="clearFilter">
+            <X class="h-4 w-4" /> Quitar filtro
+          </Button>
+        </div>
+
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
@@ -161,7 +321,7 @@ onMounted(load);
               </tr>
             </thead>
             <tbody>
-              <tr v-for="log in status?.recent_logs" :key="log.id" class="border-b last:border-0">
+              <tr v-for="log in logs?.items" :key="log.id" class="border-b last:border-0">
                 <td class="py-2 pr-4 whitespace-nowrap">{{ formatDate(log.timestamp) }}</td>
                 <td class="py-2 pr-4 text-xs text-muted-foreground">{{ sourceLabels[log.source] || log.source }}</td>
                 <td class="py-2 pr-4">{{ log.old_ip || "—" }}</td>
@@ -181,13 +341,33 @@ onMounted(load);
                   {{ domainsList(log.domains_updated).join(", ") || "—" }}
                 </td>
               </tr>
-              <tr v-if="!status?.recent_logs?.length">
+              <tr v-if="!logs?.items?.length">
                 <td colspan="6" class="py-6 text-center text-muted-foreground">
-                  Todavía no hay comprobaciones registradas
+                  No hay comprobaciones para el rango seleccionado
                 </td>
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <div v-if="logs && logs.total > pageSize" class="mt-4 flex items-center justify-between text-sm">
+          <p class="text-muted-foreground">
+            Página {{ logs.page }} de {{ Math.max(1, Math.ceil(logs.total / logs.page_size)) }}
+            ({{ logs.total }} en total)
+          </p>
+          <div class="flex gap-2">
+            <Button size="sm" variant="outline" :disabled="page <= 1" @click="prevPage">
+              <ChevronLeft class="h-4 w-4" /> Anterior
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              :disabled="page >= Math.ceil(logs.total / logs.page_size)"
+              @click="nextPage"
+            >
+              Siguiente <ChevronRight class="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

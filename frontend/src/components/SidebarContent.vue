@@ -10,6 +10,7 @@ import {
   LogOut,
   UserCircle,
   ExternalLink,
+  ScrollText,
 } from "lucide-vue-next";
 
 const emit = defineEmits<{ navigate: [] }>();
@@ -60,6 +61,15 @@ function logout() {
         @click="emit('navigate')"
       >
         <Users class="h-4 w-4" /> Usuarios
+      </RouterLink>
+      <RouterLink
+        v-if="auth.isAdmin"
+        to="/audit"
+        class="flex items-center gap-3 rounded-[5px] px-3 py-2 text-sm font-medium hover:bg-accent"
+        active-class="bg-accent text-accent-foreground"
+        @click="emit('navigate')"
+      >
+        <ScrollText class="h-4 w-4" /> Auditoría
       </RouterLink>
       <RouterLink
         to="/profile"

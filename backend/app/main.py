@@ -12,6 +12,7 @@ from .routers import users as users_router
 from .routers import zones as zones_router
 from .routers import settings as settings_router
 from .routers import status as status_router
+from .routers import audit as audit_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -30,6 +31,7 @@ app.include_router(users_router.router)
 app.include_router(zones_router.router)
 app.include_router(settings_router.router)
 app.include_router(status_router.router)
+app.include_router(audit_router.router)
 
 
 @app.on_event("startup")

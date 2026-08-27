@@ -22,6 +22,8 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.viewer, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
+    totp_secret = Column(String(64), nullable=True)
+    totp_enabled = Column(Boolean, default=False)
 
 
 class Zone(Base):
@@ -44,9 +46,11 @@ class Record(Base):
     id = Column(Integer, primary_key=True, index=True)
     zone_id = Column(Integer, ForeignKey("zones.id"), nullable=False)
     name = Column(String(255), nullable=False)  # ej: "ejemplo.com", "www.ejemplo.com", "*.ejemplo.com"
+    type = Column(String(10), default="A")  # "A" (IPv4) o "AAAA" (IPv6)
     last_ip = Column(String(64), nullable=True)
     last_updated = Column(DateTime, nullable=True)
     proxied = Column(Boolean, nullable=True)  # estado de la nube naranja (None = desconocido aún)
+    ttl = Column(Integer, nullable=True)  # None/1 = automático (TTL gestionado por Cloudflare)
 
     zone = relationship("Zone", back_populates="records")
 
@@ -72,3 +76,14 @@ class UpdateLog(Base):
     success = Column(Boolean, default=True)
     message = Column(Text, nullable=True)
     source = Column(String(32), default="scheduler")  # scheduler | manual_global | manual_zone | manual_record
+
+
+class AuditLog(Base):
+    """Registro de auditoría: qué usuario hizo qué acción administrativa"""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, default=dt.datetime.utcnow, index=True)
+    username = Column(String(64), nullable=True)  # se guarda el nombre, no FK, para conservar el historial si se borra el usuario
+    action = Column(String(64), nullable=False, index=True)
+    details = Column(Text, nullable=True)

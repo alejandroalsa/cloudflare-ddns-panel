@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { api, type Zone, type Record as DnsRecord, type ImportResult } from "@/lib/api";
+import { api, type Zone, type Record as DnsRecord, type ImportResult, type RecordType, type TestConnectionResult } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import { useConfirm } from "@/lib/confirm";
 import AppLayout from "@/components/AppLayout.vue";
@@ -13,6 +13,7 @@ import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
 import PasswordInput from "@/components/ui/PasswordInput.vue";
 import Label from "@/components/ui/Label.vue";
+import Select from "@/components/ui/Select.vue";
 import Badge from "@/components/ui/Badge.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Switch from "@/components/ui/Switch.vue";
@@ -34,6 +35,9 @@ import {
   Download,
   FileJson,
   FileDown,
+  PlugZap,
+  XCircle,
+  Network,
 } from "lucide-vue-next";
 
 const auth = useAuthStore();
@@ -75,18 +79,41 @@ const newApiToken = ref("");
 const newRecordsRaw = ref("");
 const savingZone = ref(false);
 
+// --- Probar conexión ---
+const testingConnection = ref(false);
+const testResult = ref<TestConnectionResult | null>(null);
+
+async function testConnection() {
+  testingConnection.value = true;
+  testResult.value = null;
+  try {
+    const { data } = await api.post<TestConnectionResult>("/zones/test-connection", {
+      api_token: newApiToken.value,
+      zone_id: newZoneId.value,
+    });
+    testResult.value = data;
+  } catch (e: any) {
+    testResult.value = { ok: false, zone_name: null, message: e?.response?.data?.detail || "Error al probar la conexión" };
+  } finally {
+    testingConnection.value = false;
+  }
+}
+
 // --- Añadir registro a zona existente ---
 const newRecordName = ref<{ [key: number]: string }>({});
+const newRecordType = ref<{ [key: number]: RecordType }>({});
 
 // --- Checks manuales en curso ---
 const checkingZone = ref<{ [key: number]: boolean }>({});
 const checkingRecord = ref<{ [key: number]: boolean }>({});
 
-// --- Edición manual IP/proxy ---
+// --- Edición manual IP/proxy/TTL ---
 const showEditDialog = ref(false);
 const editingRecord = ref<DnsRecord | null>(null);
 const editIp = ref("");
 const editProxied = ref(false);
+const editTtlAuto = ref(true);
+const editTtl = ref(3600);
 const savingEdit = ref(false);
 const editError = ref("");
 
@@ -113,6 +140,7 @@ function resetZoneForm() {
   newZoneId.value = "";
   newApiToken.value = "";
   newRecordsRaw.value = "";
+  testResult.value = null;
 }
 
 async function createZone() {
@@ -152,7 +180,8 @@ async function deleteZone(zone: Zone) {
 async function addRecord(zone: Zone) {
   const name = (newRecordName.value[zone.id] || "").trim();
   if (!name) return;
-  await api.post(`/zones/${zone.id}/records`, { name });
+  const type = newRecordType.value[zone.id] || "A";
+  await api.post(`/zones/${zone.id}/records`, { name, type });
   newRecordName.value[zone.id] = "";
   await load();
 }
@@ -197,6 +226,8 @@ function openEditDialog(record: DnsRecord) {
   editingRecord.value = record;
   editIp.value = record.last_ip || "";
   editProxied.value = record.proxied ?? false;
+  editTtlAuto.value = !record.ttl || record.ttl === 1;
+  editTtl.value = record.ttl && record.ttl > 1 ? record.ttl : 3600;
   editError.value = "";
   showEditDialog.value = true;
 }
@@ -209,6 +240,7 @@ async function saveManualEdit() {
     await api.put(`/zones/records/${editingRecord.value.id}/manual`, {
       ip: editIp.value,
       proxied: editProxied.value,
+      ttl: editTtlAuto.value ? null : editTtl.value,
     });
     showEditDialog.value = false;
     await load();
@@ -237,10 +269,6 @@ function downloadJson(data: unknown, filename: string) {
 }
 
 function downloadTemplate() {
-  downloadTemplateData();
-}
-
-function downloadTemplateData() {
   const template = {
     domains: {
       "ejemplo.com": {
@@ -384,13 +412,19 @@ onMounted(() => {
               class="flex flex-col gap-2 rounded-[5px] border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
             >
               <div class="min-w-0">
-                <p class="text-sm font-medium break-words">{{ record.name }}</p>
+                <div class="flex items-center gap-2">
+                  <Badge variant="outline" class="gap-1">
+                    <Network class="h-3.5 w-3.5" /> {{ record.type }}
+                  </Badge>
+                  <p class="text-sm font-medium break-words">{{ record.name }}</p>
+                </div>
                 <p class="text-xs text-muted-foreground">
-                  Última IP: {{ record.last_ip || "—" }} · {{ formatDate(record.last_updated) }}
+                  Última IP: {{ record.last_ip || "—" }} · TTL: {{ record.ttl && record.ttl > 1 ? record.ttl + "s" : "auto" }} ·
+                  {{ formatDate(record.last_updated) }}
                 </p>
               </div>
               <div class="flex flex-wrap items-center gap-2">
-                <Badge v-if="record.proxied" variant="secondary" class="gap-1">
+                <Badge v-if="record.proxied"  class="bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
                   <Cloud class="h-3.5 w-3.5" /> Proxied
                 </Badge>
                 <Badge v-else-if="record.proxied === false" variant="outline" class="gap-1">
@@ -417,7 +451,7 @@ onMounted(() => {
                   v-if="auth.isAdmin"
                   variant="ghost"
                   size="icon"
-                  title="Editar IP / proxy manualmente"
+                  title="Editar IP / proxy / TTL manualmente"
                   @click="openEditDialog(record)"
                 >
                   <Pencil class="h-4 w-4" />
@@ -438,12 +472,17 @@ onMounted(() => {
             </p>
           </div>
 
-          <div v-if="auth.isAdmin" class="mt-4 flex gap-2">
+          <div v-if="auth.isAdmin" class="mt-4 flex flex-col gap-2 sm:flex-row">
             <Input
               v-model="newRecordName[zone.id]"
               placeholder="ej: www.ejemplo.com o *.ejemplo.com"
+              class="flex-1"
               @keyup.enter="addRecord(zone)"
             />
+            <Select v-model="newRecordType[zone.id]" class="sm:w-28">
+              <option value="A">A (IPv4)</option>
+              <option value="AAAA">AAAA (IPv6)</option>
+            </Select>
             <Button variant="outline" title="Añadir registro" @click="addRecord(zone)">
               <Plus class="h-4 w-4" />
             </Button>
@@ -479,6 +518,25 @@ onMounted(() => {
           <Label>API Token</Label>
           <PasswordInput v-model="newApiToken" required />
         </div>
+
+        <div class="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            :disabled="testingConnection || !newApiToken || !newZoneId"
+            @click="testConnection"
+          >
+            <PlugZap class="h-4 w-4" /> {{ testingConnection ? "Probando..." : "Probar conexión" }}
+          </Button>
+          <Badge v-if="testResult?.ok" variant="success" class="gap-1">
+            <CheckCircle2 class="h-3.5 w-3.5" /> Conectado a "{{ testResult.zone_name }}"
+          </Badge>
+          <Badge v-else-if="testResult && !testResult.ok" variant="destructive" class="gap-1">
+            <XCircle class="h-3.5 w-3.5" /> {{ testResult.message }}
+          </Badge>
+        </div>
+
         <div class="space-y-1.5">
           <Label>Registros a mantener actualizados</Label>
           <textarea
@@ -487,7 +545,10 @@ onMounted(() => {
             class="flex w-full rounded-[5px] border border-input bg-background px-3 py-2 text-sm"
             placeholder="ejemplo.com, www.ejemplo.com, *.ejemplo.com"
           />
-          <p class="text-xs text-muted-foreground">Sepáralos por comas o saltos de línea.</p>
+          <p class="text-xs text-muted-foreground">
+            Sepáralos por comas o saltos de línea. Se crean como registros A; para AAAA añádelos
+            luego desde el dominio ya creado.
+          </p>
         </div>
         <div class="flex justify-end gap-2 pt-2">
           <Button type="button" variant="outline" @click="showZoneDialog = false">
@@ -500,17 +561,17 @@ onMounted(() => {
       </form>
     </Dialog>
 
-    <!-- Diálogo: editar IP / proxy manualmente -->
+    <!-- Diálogo: editar IP / proxy / TTL manualmente -->
     <Dialog v-model:open="showEditDialog">
       <h2 class="mb-1 text-lg font-semibold">Editar registro manualmente</h2>
       <p class="mb-4 text-sm text-muted-foreground">
-        {{ editingRecord?.name }} — esto actualiza el registro directamente en Cloudflare, sin
-        esperar a la comprobación automática.
+        {{ editingRecord?.name }} ({{ editingRecord?.type }}) — esto actualiza el registro
+        directamente en Cloudflare, sin esperar a la comprobación automática.
       </p>
       <form class="space-y-4" @submit.prevent="saveManualEdit">
         <div class="space-y-1.5">
-          <Label>Dirección IP</Label>
-          <Input v-model="editIp" placeholder="203.0.113.10" required />
+          <Label>{{ editingRecord?.type === "AAAA" ? "Dirección IPv6" : "Dirección IP" }}</Label>
+          <Input v-model="editIp" :placeholder="editingRecord?.type === 'AAAA' ? '2001:db8::1' : '203.0.113.10'" required />
         </div>
         <div class="flex items-center justify-between gap-3 rounded-[5px] border px-3 py-2">
           <div class="min-w-0">
@@ -520,6 +581,16 @@ onMounted(() => {
             </p>
           </div>
           <Switch v-model="editProxied" class="shrink-0" />
+        </div>
+        <div class="rounded-[5px] border px-3 py-2">
+          <div class="flex items-center justify-between gap-3">
+            <p class="text-sm font-medium">TTL automático</p>
+            <Switch v-model="editTtlAuto" class="shrink-0" />
+          </div>
+          <div v-if="!editTtlAuto" class="mt-3 space-y-1.5">
+            <Label class="text-xs">TTL (segundos)</Label>
+            <Input v-model.number="editTtl" type="number" min="30" />
+          </div>
         </div>
         <p v-if="editError" class="text-sm text-destructive">{{ editError }}</p>
         <div class="flex justify-end gap-2 pt-2">

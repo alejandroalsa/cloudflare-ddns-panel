@@ -16,7 +16,10 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "tailwind-merge": "^2.5.2",
-    "lucide-vue-next": "^0.441.0"
+    "lucide-vue-next": "^0.441.0",
+    "chart.js": "^4.4.4",
+    "chartjs-adapter-date-fns": "^3.0.0",
+    "date-fns": "^3.6.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.1.3",

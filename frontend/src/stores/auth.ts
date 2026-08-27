@@ -2,8 +2,9 @@ import { defineStore } from "pinia";
 import { api, type User } from "@/lib/api";
 
 interface LoginResponse {
-  access_token: string;
+  access_token: string | null;
   token_type: string;
+  totp_required: boolean;
 }
 
 export const useAuthStore = defineStore("auth", {
@@ -16,16 +17,20 @@ export const useAuthStore = defineStore("auth", {
     isAdmin: (state) => state.user?.role === "admin",
   },
   actions: {
-    async login(username: string, password: string) {
-      const form = new URLSearchParams();
-      form.append("username", username);
-      form.append("password", password);
-      const { data } = await api.post<LoginResponse>("/auth/login", form, {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    /** Devuelve true si el login se completó, false si hace falta el código 2FA. */
+    async login(username: string, password: string, totpCode?: string): Promise<boolean> {
+      const { data } = await api.post<LoginResponse>("/auth/login", {
+        username,
+        password,
+        totp_code: totpCode || null,
       });
+      if (data.totp_required) {
+        return false;
+      }
       this.token = data.access_token;
-      localStorage.setItem("ddns_token", data.access_token);
+      localStorage.setItem("ddns_token", data.access_token as string);
       await this.fetchMe();
+      return true;
     },
     async fetchMe() {
       const { data } = await api.get<User>("/auth/me");
