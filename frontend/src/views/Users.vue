@@ -249,12 +249,12 @@ onMounted(load);
             <option value="admin">Admin</option>
           </Select>
         </div>
-        <div class="flex items-center justify-between rounded-[5px] border px-3 py-2">
-          <div>
+        <div class="flex items-center justify-between gap-3 rounded-[5px] border px-3 py-2">
+          <div class="min-w-0">
             <p class="text-sm font-medium">Cuenta activa</p>
             <p class="text-xs text-muted-foreground">Si se desactiva, el usuario no podrá iniciar sesión.</p>
           </div>
-          <Switch v-model="editActive" :disabled="editingUser?.id === auth.user?.id" />
+          <Switch v-model="editActive" :disabled="editingUser?.id === auth.user?.id" class="shrink-0" />
         </div>
         <p v-if="editError" class="text-sm text-destructive">{{ editError }}</p>
         <div class="flex justify-end gap-2 pt-2">

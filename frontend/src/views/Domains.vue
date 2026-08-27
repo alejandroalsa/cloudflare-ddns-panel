@@ -335,22 +335,22 @@ onMounted(() => {
 
     <div v-else class="space-y-4">
       <Card v-for="zone in filteredZones" :key="zone.id">
-        <CardHeader class="flex-row items-center justify-between space-y-0">
+        <CardHeader class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
           <button
-            class="flex flex-1 items-center gap-2 text-left"
+            class="flex flex-1 items-center gap-2 text-left min-w-0"
             @click="toggleExpanded(zone.id)"
           >
             <ChevronDown v-if="expanded.has(zone.id)" class="h-4 w-4 shrink-0 text-muted-foreground" />
             <ChevronRight v-else class="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div>
-              <CardTitle>{{ zone.domain }}</CardTitle>
-              <CardDescription>
+            <div class="min-w-0">
+              <CardTitle class="truncate">{{ zone.domain }}</CardTitle>
+              <CardDescription class="break-words">
                 Zone ID: {{ zone.zone_id }} · Token: {{ zone.api_token_preview }} ·
                 {{ zone.records.length }} registro(s)
               </CardDescription>
             </div>
           </button>
-          <div class="flex items-center gap-1">
+          <div class="flex flex-wrap items-center gap-1 sm:shrink-0">
             <Button
               v-if="auth.isAdmin"
               variant="ghost"
@@ -381,15 +381,15 @@ onMounted(() => {
             <div
               v-for="record in zone.records"
               :key="record.id"
-              class="flex items-center justify-between rounded-[5px] border px-3 py-2"
+              class="flex flex-col gap-2 rounded-[5px] border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
             >
-              <div>
-                <p class="text-sm font-medium">{{ record.name }}</p>
+              <div class="min-w-0">
+                <p class="text-sm font-medium break-words">{{ record.name }}</p>
                 <p class="text-xs text-muted-foreground">
                   Última IP: {{ record.last_ip || "—" }} · {{ formatDate(record.last_updated) }}
                 </p>
               </div>
-              <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <Badge v-if="record.proxied" variant="secondary" class="gap-1">
                   <Cloud class="h-3.5 w-3.5" /> Proxied
                 </Badge>
@@ -512,14 +512,14 @@ onMounted(() => {
           <Label>Dirección IP</Label>
           <Input v-model="editIp" placeholder="203.0.113.10" required />
         </div>
-        <div class="flex items-center justify-between rounded-[5px] border px-3 py-2">
-          <div>
+        <div class="flex items-center justify-between gap-3 rounded-[5px] border px-3 py-2">
+          <div class="min-w-0">
             <p class="text-sm font-medium">Proxy de Cloudflare (nube naranja)</p>
             <p class="text-xs text-muted-foreground">
               Activado = tráfico a través de Cloudflare. Desactivado = DNS only.
             </p>
           </div>
-          <Switch v-model="editProxied" />
+          <Switch v-model="editProxied" class="shrink-0" />
         </div>
         <p v-if="editError" class="text-sm text-destructive">{{ editError }}</p>
         <div class="flex justify-end gap-2 pt-2">

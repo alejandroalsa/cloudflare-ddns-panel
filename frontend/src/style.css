@@ -47,7 +47,15 @@
   * {
     @apply border-border;
   }
+  html {
+    overflow-x: hidden;
+  }
   body {
     @apply bg-background text-foreground antialiased;
+    overflow-x: hidden;
+  }
+  #app {
+    min-width: 0;
+    overflow-x: hidden;
   }
 }

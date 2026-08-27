@@ -7,7 +7,7 @@ const mobileMenuOpen = ref(false);
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col md:flex-row">
+  <div class="flex min-h-screen w-full flex-col overflow-x-hidden md:flex-row">
     <!-- Barra superior: solo móvil -->
     <header class="flex items-center justify-between border-b bg-card px-4 py-3 md:hidden">
       <div class="flex items-center gap-2">
@@ -60,7 +60,7 @@ const mobileMenuOpen = ref(false);
       <SidebarContent />
     </aside>
 
-    <main class="flex-1 bg-muted/30 p-4 sm:p-6 md:p-8">
+    <main class="min-w-0 flex-1 overflow-x-hidden bg-muted/30 p-4 sm:p-6 md:p-8">
       <slot />
     </main>
   </div>
