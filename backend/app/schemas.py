@@ -33,8 +33,21 @@ class TwoFAConfirmRequest(BaseModel):
     code: str
 
 
+class TwoFAConfirmResult(BaseModel):
+    user: "UserOut"
+    recovery_codes: List[str]
+
+
 class TwoFADisableRequest(BaseModel):
     password: str
+
+
+class RecoveryCodesRequest(BaseModel):
+    password: str
+
+
+class RecoveryCodesOut(BaseModel):
+    codes: List[str]
 
 
 # ---------- Users ----------
@@ -78,7 +91,12 @@ class RecordBase(BaseModel):
 
 
 class RecordCreate(RecordBase):
-    pass
+    # Si se indica "ip", el registro se CREA directamente en Cloudflare con esa IP.
+    # Si se omite, se asume que el registro ya existe en Cloudflare y el panel
+    # solo empieza a vigilarlo (comportamiento anterior).
+    ip: Optional[str] = None
+    proxied: Optional[bool] = None
+    ttl: Optional[int] = None
 
 
 class RecordOut(RecordBase):
@@ -95,6 +113,18 @@ class RecordManualUpdate(BaseModel):
     ip: str
     proxied: Optional[bool] = None
     ttl: Optional[int] = None  # None = automático
+
+
+class BulkRecordManualUpdate(BaseModel):
+    record_ids: List[int]
+    ip: str
+    proxied: Optional[bool] = None
+    ttl: Optional[int] = None
+
+
+class BulkRecordManualResult(BaseModel):
+    updated: List[str] = []
+    failed: List[str] = []
 
 
 # ---------- Zones ----------
@@ -197,6 +227,8 @@ class AuditLogOut(BaseModel):
     username: Optional[str]
     action: str
     details: Optional[str]
+    before_json: Optional[str] = None
+    after_json: Optional[str] = None
 
 
 class PaginatedAudit(BaseModel):

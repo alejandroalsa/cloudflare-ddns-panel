@@ -89,6 +89,9 @@ def clear_logs(db: Session = Depends(get_db), current_user: models.User = Depend
     """Elimina todo el historial de comprobaciones."""
     count = db.query(models.UpdateLog).count()
     db.query(models.UpdateLog).delete()
-    audit(db, current_user.username, "logs_cleared", f"Borró el historial ({count} entradas)")
+    audit(
+        db, current_user.username, "logs_cleared", f"Borró el historial ({count} entradas)",
+        before={"total_entries": count}, after=None,
+    )
     db.commit()
     return {"ok": True}

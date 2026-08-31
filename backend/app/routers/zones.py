@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+import datetime as dt
 
 from .. import models, schemas
 from ..database import get_db
@@ -15,6 +16,25 @@ def _to_out(zone: models.Zone) -> schemas.ZoneOut:
     out = schemas.ZoneOut.model_validate(zone)
     out.api_token_preview = (zone.api_token[:4] + "…" + zone.api_token[-4:]) if zone.api_token else None
     return out
+
+
+def _zone_snapshot(zone: models.Zone) -> dict:
+    return {
+        "domain": zone.domain,
+        "zone_id": zone.zone_id,
+        "api_token_preview": (zone.api_token[:4] + "…" + zone.api_token[-4:]) if zone.api_token else None,
+        "records": [r.name for r in zone.records],
+    }
+
+
+def _record_snapshot(record: models.Record) -> dict:
+    return {
+        "name": record.name,
+        "type": record.type,
+        "ip": record.last_ip,
+        "proxied": record.proxied,
+        "ttl": record.ttl,
+    }
 
 
 @router.get("", response_model=List[schemas.ZoneOut])
@@ -47,7 +67,11 @@ def create_zone(
     db.flush()
     for record_name in payload.records:
         db.add(models.Record(zone_id=zone.id, name=record_name, type="A"))
-    audit(db, current_user.username, "zone_create", f"Creó el dominio '{payload.domain}' con {len(payload.records)} registro(s)")
+    db.flush()
+    audit(
+        db, current_user.username, "zone_create", f"Creó el dominio '{payload.domain}' con {len(payload.records)} registro(s)",
+        before=None, after=_zone_snapshot(zone),
+    )
     db.commit()
     db.refresh(zone)
     return _to_out(zone)
@@ -63,11 +87,17 @@ def update_zone(
     zone = db.query(models.Zone).get(zone_id)
     if not zone:
         raise HTTPException(404, "Dominio no encontrado")
+
+    before = _zone_snapshot(zone)
     if payload.api_token is not None:
         zone.api_token = payload.api_token
     if payload.zone_id is not None:
         zone.zone_id = payload.zone_id
-    audit(db, current_user.username, "zone_update", f"Editó la configuración del dominio '{zone.domain}'")
+
+    audit(
+        db, current_user.username, "zone_update", f"Editó la configuración del dominio '{zone.domain}'",
+        before=before, after=_zone_snapshot(zone),
+    )
     db.commit()
     db.refresh(zone)
     return _to_out(zone)
@@ -82,7 +112,10 @@ def delete_zone(
     zone = db.query(models.Zone).get(zone_id)
     if not zone:
         raise HTTPException(404, "Dominio no encontrado")
-    audit(db, current_user.username, "zone_delete", f"Eliminó el dominio '{zone.domain}' y sus {len(zone.records)} registro(s)")
+    audit(
+        db, current_user.username, "zone_delete", f"Eliminó el dominio '{zone.domain}' y sus {len(zone.records)} registro(s)",
+        before=_zone_snapshot(zone), after=None,
+    )
     db.delete(zone)
     db.commit()
     return {"ok": True}
@@ -100,9 +133,35 @@ def add_record(
     if not zone:
         raise HTTPException(404, "Dominio no encontrado")
     record_type = payload.type if payload.type in ("A", "AAAA") else "A"
+
+    cf_result = None
+    if payload.ip:
+        try:
+            cf_result = ddns_scheduler.create_dns_record(
+                zone.zone_id, zone.api_token, payload.name, record_type,
+                payload.ip, payload.proxied, payload.ttl,
+            )
+        except ValueError as e:
+            raise HTTPException(409, f"No se pudo crear el registro en Cloudflare: {e}")
+        except Exception as e:
+            raise HTTPException(502, f"Error contactando con Cloudflare: {e}")
+
     record = models.Record(zone_id=zone.id, name=payload.name, type=record_type)
+    if cf_result:
+        record.last_ip = cf_result.get("content")
+        record.last_updated = dt.datetime.utcnow()
+        record.proxied = cf_result.get("proxied")
+        record.ttl = cf_result.get("ttl")
     db.add(record)
-    audit(db, current_user.username, "record_create", f"Añadió el registro {record_type} '{payload.name}' a '{zone.domain}'")
+    db.flush()
+
+    action = "record_create_in_cloudflare" if cf_result else "record_create"
+    details = (
+        f"Creó el registro {record_type} '{payload.name}' en Cloudflare con IP {payload.ip} (dominio '{zone.domain}')"
+        if cf_result else
+        f"Añadió el registro {record_type} '{payload.name}' a '{zone.domain}' (ya existente en Cloudflare)"
+    )
+    audit(db, current_user.username, action, details, before=None, after=_record_snapshot(record))
     db.commit()
     db.refresh(record)
     return record
@@ -117,7 +176,10 @@ def delete_record(
     record = db.query(models.Record).get(record_id)
     if not record:
         raise HTTPException(404, "Registro no encontrado")
-    audit(db, current_user.username, "record_delete", f"Eliminó el registro '{record.name}' de '{record.zone.domain}'")
+    audit(
+        db, current_user.username, "record_delete", f"Eliminó el registro '{record.name}' de '{record.zone.domain}'",
+        before=_record_snapshot(record), after=None,
+    )
     db.delete(record)
     db.commit()
     return {"ok": True}
@@ -132,7 +194,7 @@ def check_zone_now(
 ):
     try:
         result = ddns_scheduler.run_check_for_zone(db, zone_id)
-        audit(db, current_user.username, "manual_check_zone", f"Comprobación manual de la zona id={zone_id}")
+        audit(db, current_user.username, "manual_check_zone", f"Comprobación manual de la zona id={zone_id}", after=result)
         db.commit()
         return result
     except ValueError as e:
@@ -149,7 +211,7 @@ def check_record_now(
 ):
     try:
         result = ddns_scheduler.run_check_for_record(db, record_id)
-        audit(db, current_user.username, "manual_check_record", f"Comprobación manual del registro id={record_id}")
+        audit(db, current_user.username, "manual_check_record", f"Comprobación manual del registro id={record_id}", after=result)
         db.commit()
         return result
     except ValueError as e:
@@ -166,6 +228,11 @@ def manual_update_record(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin),
 ):
+    record = db.query(models.Record).get(record_id)
+    if not record:
+        raise HTTPException(404, "Registro no encontrado")
+    before = _record_snapshot(record)
+
     try:
         ddns_scheduler.manual_update_record(db, record_id, payload.ip, payload.proxied, payload.ttl)
     except ValueError as e:
@@ -173,10 +240,47 @@ def manual_update_record(
     except Exception as e:
         raise HTTPException(502, f"Error actualizando en Cloudflare: {e}")
 
-    record = db.query(models.Record).get(record_id)
-    audit(db, current_user.username, "record_manual_edit", f"Editó manualmente '{record.name}' → {payload.ip}")
+    db.refresh(record)
+    audit(
+        db, current_user.username, "record_manual_edit", f"Editó manualmente '{record.name}' → {payload.ip}",
+        before=before, after=_record_snapshot(record),
+    )
     db.commit()
     return record
+
+
+@router.post("/records/bulk-manual", response_model=schemas.BulkRecordManualResult)
+def bulk_manual_update(
+    payload: schemas.BulkRecordManualUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    """Aplica la misma IP/proxy/TTL a varios registros de golpe (grupo lógico de dominios)."""
+    result = schemas.BulkRecordManualResult()
+    before_all = {}
+    after_all = {}
+
+    for record_id in payload.record_ids:
+        record = db.query(models.Record).get(record_id)
+        if not record:
+            result.failed.append(f"id={record_id} (no encontrado)")
+            continue
+        before_all[record.name] = _record_snapshot(record)
+        try:
+            ddns_scheduler.manual_update_record(db, record_id, payload.ip, payload.proxied, payload.ttl)
+            db.refresh(record)
+            after_all[record.name] = _record_snapshot(record)
+            result.updated.append(record.name)
+        except Exception as e:
+            result.failed.append(f"{record.name} ({e})")
+
+    audit(
+        db, current_user.username, "record_bulk_manual_edit",
+        f"Editó manualmente {len(result.updated)} registro(s) → {payload.ip}",
+        before=before_all, after=after_all,
+    )
+    db.commit()
+    return result
 
 
 # ---------- Import / Export ----------
@@ -234,6 +338,10 @@ def import_zones(
             for record_name in entry.records:
                 db.add(models.Record(zone_id=zone.id, name=record_name, type="A"))
             result.created.append(domain)
-    audit(db, current_user.username, "zones_import", f"Importó {len(result.created)} nuevo(s), actualizó {len(result.updated)}")
+    audit(
+        db, current_user.username, "zones_import",
+        f"Importó {len(result.created)} nuevo(s), actualizó {len(result.updated)}",
+        before=None, after={"created": result.created, "updated": result.updated},
+    )
     db.commit()
     return result

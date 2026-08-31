@@ -78,6 +78,29 @@ def update_dns_record(zone_id: str, record: dict, new_content: str, token: str, 
     return r.json()["result"]
 
 
+def create_dns_record(zone_id: str, token: str, name: str, record_type: str, content: str, proxied: bool = None, ttl: int = None) -> dict:
+    """Crea un registro DNS nuevo directamente en Cloudflare (no lo actualiza, lo crea desde cero)."""
+    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = {
+        "type": record_type,
+        "name": name,
+        "content": content,
+        "ttl": ttl if ttl else 1,  # 1 = automático en Cloudflare
+        "proxied": bool(proxied),
+    }
+    r = requests.post(url, headers=headers, json=payload, timeout=15)
+    if r.status_code >= 400:
+        try:
+            errors = r.json().get("errors", [])
+            message = errors[0]["message"] if errors else f"HTTP {r.status_code}"
+        except Exception:
+            message = f"HTTP {r.status_code}"
+        raise ValueError(message)
+    logger.info(f"[{zone_id}] Registro {record_type} '{name}' creado en Cloudflare → {content}")
+    return r.json()["result"]
+
+
 def _match_target(zone, cf_record_name: str, cf_record_type: str):
     """Busca en los registros configurados de la zona cuál corresponde al nombre+tipo devuelto por Cloudflare."""
     for record_obj in zone.records:

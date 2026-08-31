@@ -76,7 +76,11 @@ async function onSubmit() {
         <form v-else class="space-y-4" @submit.prevent="onSubmit">
           <div class="space-y-1.5">
             <Label for="totp">Código de verificación</Label>
-            <Input id="totp" v-model="totpCode" inputmode="numeric" maxlength="6" autofocus placeholder="123456" required />
+            <Input id="totp" v-model="totpCode" maxlength="9" autofocus placeholder="123456 o XXXX-XXXX" required />
+            <p class="text-xs text-muted-foreground">
+              Introduce el código de tu app de autenticación, o un código de recuperación si no
+              tienes acceso a ella.
+            </p>
           </div>
           <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
           <Button type="submit" class="w-full" :disabled="loading">

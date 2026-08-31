@@ -17,7 +17,7 @@ import Select from "@/components/ui/Select.vue";
 import Badge from "@/components/ui/Badge.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import Switch from "@/components/ui/Switch.vue";
-import { Plus, Trash2, CheckCircle2, Ban, Pencil, Save, X, UserPlus, ShieldCheck, Eye } from "lucide-vue-next";
+import { Plus, Trash2, CheckCircle2, Ban, Pencil, Save, X, UserPlus, ShieldCheck, Eye, Smartphone, ShieldOff } from "lucide-vue-next";
 
 const auth = useAuthStore();
 const { confirmDelete } = useConfirm();
@@ -121,6 +121,17 @@ async function deleteUser(user: User) {
   await load();
 }
 
+async function disable2fa(user: User) {
+  const ok = await confirmDelete(
+    `Desactivar 2FA de ${user.username}`,
+    "El usuario podrá volver a iniciar sesión solo con su contraseña, sin código de verificación.",
+    "Desactivar"
+  );
+  if (!ok) return;
+  await api.post(`/users/${user.id}/disable-2fa`);
+  await load();
+}
+
 onMounted(load);
 </script>
 
@@ -149,6 +160,7 @@ onMounted(load);
                 <th class="py-2 pr-4 font-medium">Email</th>
                 <th class="py-2 pr-4 font-medium">Rol</th>
                 <th class="py-2 pr-4 font-medium">Estado</th>
+                <th class="py-2 pr-4 font-medium">2FA</th>
                 <th class="py-2 pr-4 font-medium text-right">Acciones</th>
               </tr>
             </thead>
@@ -170,9 +182,25 @@ onMounted(load);
                     {{ user.is_active ? "Activo" : "Deshabilitado" }}
                   </Badge>
                 </td>
+                <td class="py-2 pr-4">
+                  <Badge :variant="user.totp_enabled ? 'success' : 'outline'" class="gap-1">
+                    <ShieldCheck v-if="user.totp_enabled" class="h-3.5 w-3.5" />
+                    <Smartphone v-else class="h-3.5 w-3.5" />
+                    {{ user.totp_enabled ? "Activo" : "Inactivo" }}
+                  </Badge>
+                </td>
                 <td class="py-2 pr-4 text-right">
                   <Button variant="ghost" size="icon" title="Editar usuario" @click="openEditDialog(user)">
                     <Pencil class="h-4 w-4" />
+                  </Button>
+                  <Button
+                    v-if="user.totp_enabled"
+                    variant="ghost"
+                    size="icon"
+                    title="Desactivar 2FA de este usuario"
+                    @click="disable2fa(user)"
+                  >
+                    <ShieldOff class="h-4 w-4 text-amber-600" />
                   </Button>
                   <Button
                     variant="ghost"

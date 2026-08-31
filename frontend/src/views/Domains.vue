@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { api, type Zone, type Record as DnsRecord, type ImportResult, type RecordType, type TestConnectionResult } from "@/lib/api";
+import { api, type Zone, type Record as DnsRecord, type ImportResult, type RecordType, type TestConnectionResult, type BulkRecordManualResult } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import { useConfirm } from "@/lib/confirm";
 import AppLayout from "@/components/AppLayout.vue";
@@ -38,6 +38,7 @@ import {
   PlugZap,
   XCircle,
   Network,
+  Layers,
 } from "lucide-vue-next";
 
 const auth = useAuthStore();
@@ -71,6 +72,33 @@ function toggleExpanded(zoneId: number) {
   expanded.value = next;
 }
 
+// --- Selección múltiple (grupo lógico) para edición en bloque ---
+const selectedIds = ref<Set<number>>(new Set());
+const allRecordsById = computed(() => {
+  const map = new Map<number, DnsRecord>();
+  for (const zone of zones.value) {
+    for (const r of zone.records) map.set(r.id, r);
+  }
+  return map;
+});
+const selectedRecords = computed(() => Array.from(selectedIds.value).map((id) => allRecordsById.value.get(id)).filter(Boolean) as DnsRecord[]);
+const selectedType = computed<RecordType | null>(() => selectedRecords.value[0]?.type || null);
+
+function toggleSelect(record: DnsRecord) {
+  const next = new Set(selectedIds.value);
+  if (next.has(record.id)) {
+    next.delete(record.id);
+  } else {
+    if (selectedType.value && record.type !== selectedType.value) return; // no mezclar tipos
+    next.add(record.id);
+  }
+  selectedIds.value = next;
+}
+
+function clearSelection() {
+  selectedIds.value = new Set();
+}
+
 // --- Diálogo nueva zona ---
 const showZoneDialog = ref(false);
 const newDomain = ref("");
@@ -99,16 +127,26 @@ async function testConnection() {
   }
 }
 
-// --- Añadir registro a zona existente ---
-const newRecordName = ref<{ [key: number]: string }>({});
-const newRecordType = ref<{ [key: number]: RecordType }>({});
+// --- Añadir registro a zona existente (diálogo) ---
+const showAddRecordDialog = ref(false);
+const addRecordZone = ref<Zone | null>(null);
+const addName = ref("");
+const addType = ref<RecordType>("A");
+const addCreateInCf = ref(false);
+const addIp = ref("");
+const addProxied = ref(false);
+const addTtlAuto = ref(true);
+const addTtl = ref(3600);
+const addSaving = ref(false);
+const addError = ref("");
 
 // --- Checks manuales en curso ---
 const checkingZone = ref<{ [key: number]: boolean }>({});
 const checkingRecord = ref<{ [key: number]: boolean }>({});
 
-// --- Edición manual IP/proxy/TTL ---
+// --- Edición manual IP/proxy/TTL (individual y en bloque) ---
 const showEditDialog = ref(false);
+const isBulkEdit = ref(false);
 const editingRecord = ref<DnsRecord | null>(null);
 const editIp = ref("");
 const editProxied = ref(false);
@@ -116,6 +154,9 @@ const editTtlAuto = ref(true);
 const editTtl = ref(3600);
 const savingEdit = ref(false);
 const editError = ref("");
+
+const showBulkResultDialog = ref(false);
+const bulkResult = ref<BulkRecordManualResult | null>(null);
 
 // --- Import / Export ---
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -177,13 +218,38 @@ async function deleteZone(zone: Zone) {
   await load();
 }
 
-async function addRecord(zone: Zone) {
-  const name = (newRecordName.value[zone.id] || "").trim();
-  if (!name) return;
-  const type = newRecordType.value[zone.id] || "A";
-  await api.post(`/zones/${zone.id}/records`, { name, type });
-  newRecordName.value[zone.id] = "";
-  await load();
+function openAddRecordDialog(zone: Zone) {
+  addRecordZone.value = zone;
+  addName.value = "";
+  addType.value = "A";
+  addCreateInCf.value = false;
+  addIp.value = "";
+  addProxied.value = false;
+  addTtlAuto.value = true;
+  addTtl.value = 3600;
+  addError.value = "";
+  showAddRecordDialog.value = true;
+}
+
+async function submitAddRecord() {
+  if (!addRecordZone.value) return;
+  addSaving.value = true;
+  addError.value = "";
+  try {
+    const payload: Record<string, unknown> = { name: addName.value, type: addType.value };
+    if (addCreateInCf.value) {
+      payload.ip = addIp.value;
+      payload.proxied = addProxied.value;
+      if (!addTtlAuto.value) payload.ttl = addTtl.value;
+    }
+    await api.post(`/zones/${addRecordZone.value.id}/records`, payload);
+    showAddRecordDialog.value = false;
+    await load();
+  } catch (e: any) {
+    addError.value = e?.response?.data?.detail || "No se pudo añadir el registro";
+  } finally {
+    addSaving.value = false;
+  }
 }
 
 async function deleteRecord(record: DnsRecord) {
@@ -193,6 +259,7 @@ async function deleteRecord(record: DnsRecord) {
   );
   if (!ok) return;
   await api.delete(`/zones/records/${record.id}`);
+  selectedIds.value.delete(record.id);
   await load();
 }
 
@@ -223,6 +290,7 @@ async function checkRecordNow(record: DnsRecord) {
 }
 
 function openEditDialog(record: DnsRecord) {
+  isBulkEdit.value = false;
   editingRecord.value = record;
   editIp.value = record.last_ip || "";
   editProxied.value = record.proxied ?? false;
@@ -232,17 +300,40 @@ function openEditDialog(record: DnsRecord) {
   showEditDialog.value = true;
 }
 
+function openBulkEditDialog() {
+  isBulkEdit.value = true;
+  editingRecord.value = null;
+  editIp.value = "";
+  editProxied.value = false;
+  editTtlAuto.value = true;
+  editTtl.value = 3600;
+  editError.value = "";
+  showEditDialog.value = true;
+}
+
 async function saveManualEdit() {
-  if (!editingRecord.value) return;
   savingEdit.value = true;
   editError.value = "";
   try {
-    await api.put(`/zones/records/${editingRecord.value.id}/manual`, {
-      ip: editIp.value,
-      proxied: editProxied.value,
-      ttl: editTtlAuto.value ? null : editTtl.value,
-    });
-    showEditDialog.value = false;
+    if (isBulkEdit.value) {
+      const { data } = await api.post<BulkRecordManualResult>("/zones/records/bulk-manual", {
+        record_ids: Array.from(selectedIds.value),
+        ip: editIp.value,
+        proxied: editProxied.value,
+        ttl: editTtlAuto.value ? null : editTtl.value,
+      });
+      showEditDialog.value = false;
+      bulkResult.value = data;
+      showBulkResultDialog.value = true;
+      clearSelection();
+    } else if (editingRecord.value) {
+      await api.put(`/zones/records/${editingRecord.value.id}/manual`, {
+        ip: editIp.value,
+        proxied: editProxied.value,
+        ttl: editTtlAuto.value ? null : editTtl.value,
+      });
+      showEditDialog.value = false;
+    }
     await load();
   } catch (e: any) {
     editError.value = e?.response?.data?.detail || "No se pudo actualizar el registro";
@@ -352,9 +443,22 @@ onMounted(() => {
       </div>
     </div>
 
-    <div class="relative mb-4 max-w-sm">
-      <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-      <Input v-model="search" placeholder="Buscar dominio o registro..." class="pl-9" />
+    <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div class="relative max-w-sm flex-1">
+        <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input v-model="search" placeholder="Buscar dominio o registro..." class="pl-9" />
+      </div>
+
+      <div v-if="selectedIds.size > 0" class="flex items-center gap-2 rounded-[5px] border bg-accent px-3 py-2">
+        <Layers class="h-4 w-4 shrink-0" />
+        <span class="text-sm font-medium">{{ selectedIds.size }} seleccionado(s) ({{ selectedType }})</span>
+        <Button size="sm" @click="openBulkEditDialog">
+          <Pencil class="h-4 w-4" /> Editar seleccionados
+        </Button>
+        <Button size="sm" variant="ghost" @click="clearSelection">
+          <X class="h-4 w-4" /> Cancelar
+        </Button>
+      </div>
     </div>
 
     <p v-if="error" class="mb-4 text-sm text-destructive">{{ error }}</p>
@@ -410,21 +514,32 @@ onMounted(() => {
               v-for="record in zone.records"
               :key="record.id"
               class="flex flex-col gap-2 rounded-[5px] border px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+              :class="{ 'border-primary bg-accent/50': selectedIds.has(record.id) }"
             >
-              <div class="min-w-0">
-                <div class="flex items-center gap-2">
-                  <Badge variant="outline" class="gap-1">
-                    <Network class="h-3.5 w-3.5" /> {{ record.type }}
-                  </Badge>
-                  <p class="text-sm font-medium break-words">{{ record.name }}</p>
+              <div class="flex min-w-0 items-start gap-2">
+                <input
+                  v-if="auth.isAdmin"
+                  type="checkbox"
+                  class="mt-1 h-4 w-4 shrink-0 rounded-[3px]"
+                  :checked="selectedIds.has(record.id)"
+                  :disabled="!!selectedType && selectedType !== record.type && !selectedIds.has(record.id)"
+                  @change="toggleSelect(record)"
+                />
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <Badge variant="outline" class="gap-1">
+                      <Network class="h-3.5 w-3.5" /> {{ record.type }}
+                    </Badge>
+                    <p class="text-sm font-medium break-words">{{ record.name }}</p>
+                  </div>
+                  <p class="text-xs text-muted-foreground">
+                    Última IP: {{ record.last_ip || "—" }} · TTL: {{ record.ttl && record.ttl > 1 ? record.ttl + "s" : "auto" }} ·
+                    {{ formatDate(record.last_updated) }}
+                  </p>
                 </div>
-                <p class="text-xs text-muted-foreground">
-                  Última IP: {{ record.last_ip || "—" }} · TTL: {{ record.ttl && record.ttl > 1 ? record.ttl + "s" : "auto" }} ·
-                  {{ formatDate(record.last_updated) }}
-                </p>
               </div>
               <div class="flex flex-wrap items-center gap-2">
-                <Badge v-if="record.proxied"  class="bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                <Badge v-if="record.proxied" variant="secondary" class="gap-1">
                   <Cloud class="h-3.5 w-3.5" /> Proxied
                 </Badge>
                 <Badge v-else-if="record.proxied === false" variant="outline" class="gap-1">
@@ -472,19 +587,9 @@ onMounted(() => {
             </p>
           </div>
 
-          <div v-if="auth.isAdmin" class="mt-4 flex flex-col gap-2 sm:flex-row">
-            <Input
-              v-model="newRecordName[zone.id]"
-              placeholder="ej: www.ejemplo.com o *.ejemplo.com"
-              class="flex-1"
-              @keyup.enter="addRecord(zone)"
-            />
-            <Select v-model="newRecordType[zone.id]" class="sm:w-28">
-              <option value="A">A (IPv4)</option>
-              <option value="AAAA">AAAA (IPv6)</option>
-            </Select>
-            <Button variant="outline" title="Añadir registro" @click="addRecord(zone)">
-              <Plus class="h-4 w-4" />
+          <div v-if="auth.isAdmin" class="mt-4">
+            <Button variant="outline" class="w-full sm:w-auto" @click="openAddRecordDialog(zone)">
+              <Plus class="h-4 w-4" /> Añadir registro
             </Button>
           </div>
         </CardContent>
@@ -561,17 +666,95 @@ onMounted(() => {
       </form>
     </Dialog>
 
-    <!-- Diálogo: editar IP / proxy / TTL manualmente -->
-    <Dialog v-model:open="showEditDialog">
-      <h2 class="mb-1 text-lg font-semibold">Editar registro manualmente</h2>
+    <!-- Diálogo: añadir registro (con opción de crearlo directamente en Cloudflare) -->
+    <Dialog v-model:open="showAddRecordDialog">
+      <h2 class="mb-1 text-lg font-semibold">Añadir registro</h2>
       <p class="mb-4 text-sm text-muted-foreground">
-        {{ editingRecord?.name }} ({{ editingRecord?.type }}) — esto actualiza el registro
-        directamente en Cloudflare, sin esperar a la comprobación automática.
+        Dominio: <strong>{{ addRecordZone?.domain }}</strong>
+      </p>
+      <form class="space-y-4" @submit.prevent="submitAddRecord">
+        <div class="space-y-1.5">
+          <Label>Nombre</Label>
+          <Input v-model="addName" placeholder="ej: www.ejemplo.com o *.ejemplo.com" required />
+        </div>
+        <div class="space-y-1.5">
+          <Label>Tipo</Label>
+          <Select v-model="addType">
+            <option value="A">A (IPv4)</option>
+            <option value="AAAA">AAAA (IPv6)</option>
+          </Select>
+        </div>
+
+        <div class="rounded-[5px] border px-3 py-2">
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <p class="text-sm font-medium">Crear el registro en Cloudflare</p>
+              <p class="text-xs text-muted-foreground">
+                {{
+                  addCreateInCf
+                    ? "Se creará como registro nuevo en Cloudflare con la IP que indiques."
+                    : "El registro ya existe en Cloudflare — el panel solo empezará a vigilarlo."
+                }}
+              </p>
+            </div>
+            <Switch v-model="addCreateInCf" class="shrink-0" />
+          </div>
+
+          <div v-if="addCreateInCf" class="mt-3 space-y-3 border-t pt-3">
+            <div class="space-y-1.5">
+              <Label>{{ addType === "AAAA" ? "Dirección IPv6" : "Dirección IP" }}</Label>
+              <Input v-model="addIp" :placeholder="addType === 'AAAA' ? '2001:db8::1' : '203.0.113.10'" required />
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <p class="text-sm font-medium">Proxy de Cloudflare (nube naranja)</p>
+              <Switch v-model="addProxied" class="shrink-0" />
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <p class="text-sm font-medium">TTL automático</p>
+              <Switch v-model="addTtlAuto" class="shrink-0" />
+            </div>
+            <div v-if="!addTtlAuto" class="space-y-1.5">
+              <Label class="text-xs">TTL (segundos)</Label>
+              <Input v-model.number="addTtl" type="number" min="30" />
+            </div>
+          </div>
+        </div>
+
+        <p v-if="addError" class="text-sm text-destructive">{{ addError }}</p>
+        <div class="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="outline" @click="showAddRecordDialog = false">
+            <X class="h-4 w-4" /> Cancelar
+          </Button>
+          <Button type="submit" :disabled="addSaving">
+            <Save class="h-4 w-4" /> {{ addSaving ? "Guardando..." : "Guardar" }}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+
+    <!-- Diálogo: editar IP / proxy / TTL manualmente (individual o en bloque) -->
+    <Dialog v-model:open="showEditDialog">
+      <h2 class="mb-1 text-lg font-semibold">
+        {{ isBulkEdit ? `Editar ${selectedIds.size} registros seleccionados` : "Editar registro manualmente" }}
+      </h2>
+      <p class="mb-4 text-sm text-muted-foreground">
+        <template v-if="isBulkEdit">
+          Se aplicará la misma IP{{ selectedType === "AAAA" ? "v6" : "" }}, proxy y TTL a todos los
+          registros seleccionados ({{ selectedType }}).
+        </template>
+        <template v-else>
+          {{ editingRecord?.name }} ({{ editingRecord?.type }}) — esto actualiza el registro
+          directamente en Cloudflare, sin esperar a la comprobación automática.
+        </template>
       </p>
       <form class="space-y-4" @submit.prevent="saveManualEdit">
         <div class="space-y-1.5">
-          <Label>{{ editingRecord?.type === "AAAA" ? "Dirección IPv6" : "Dirección IP" }}</Label>
-          <Input v-model="editIp" :placeholder="editingRecord?.type === 'AAAA' ? '2001:db8::1' : '203.0.113.10'" required />
+          <Label>{{ (isBulkEdit ? selectedType : editingRecord?.type) === "AAAA" ? "Dirección IPv6" : "Dirección IP" }}</Label>
+          <Input
+            v-model="editIp"
+            :placeholder="(isBulkEdit ? selectedType : editingRecord?.type) === 'AAAA' ? '2001:db8::1' : '203.0.113.10'"
+            required
+          />
         </div>
         <div class="flex items-center justify-between gap-3 rounded-[5px] border px-3 py-2">
           <div class="min-w-0">
@@ -602,6 +785,26 @@ onMounted(() => {
           </Button>
         </div>
       </form>
+    </Dialog>
+
+    <!-- Diálogo: resultado de edición en bloque -->
+    <Dialog v-model:open="showBulkResultDialog">
+      <h2 class="mb-4 text-lg font-semibold">Edición en bloque completada</h2>
+      <div v-if="bulkResult" class="space-y-3 text-sm">
+        <div v-if="bulkResult.updated.length">
+          <p class="font-medium text-emerald-600">Actualizados ({{ bulkResult.updated.length }})</p>
+          <p class="text-muted-foreground">{{ bulkResult.updated.join(", ") }}</p>
+        </div>
+        <div v-if="bulkResult.failed.length">
+          <p class="font-medium text-destructive">Con errores ({{ bulkResult.failed.length }})</p>
+          <p class="text-muted-foreground">{{ bulkResult.failed.join(" · ") }}</p>
+        </div>
+      </div>
+      <div class="mt-6 flex justify-end">
+        <Button @click="showBulkResultDialog = false">
+          <CheckCircle2 class="h-4 w-4" /> Entendido
+        </Button>
+      </div>
     </Dialog>
 
     <!-- Diálogo: resultado de importación -->

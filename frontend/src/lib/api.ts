@@ -125,6 +125,8 @@ export interface AuditLogEntry {
   username: string | null;
   action: string;
   details: string | null;
+  before_json: string | null;
+  after_json: string | null;
 }
 
 export interface PaginatedAudit {
@@ -139,6 +141,21 @@ export interface TwoFASetup {
   secret: string;
   otpauth_url: string;
   qr_code_base64: string;
+}
+
+export interface TwoFAConfirmResult {
+  user: User;
+  recovery_codes: string[];
+}
+
+export interface RecoveryCodesOut {
+  codes: string[];
+}
+
+// ---------- Edición en bloque ----------
+export interface BulkRecordManualResult {
+  updated: string[];
+  failed: string[];
 }
 
 // ---------- Import / Export ----------

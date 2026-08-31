@@ -87,3 +87,16 @@ class AuditLog(Base):
     username = Column(String(64), nullable=True)  # se guarda el nombre, no FK, para conservar el historial si se borra el usuario
     action = Column(String(64), nullable=False, index=True)
     details = Column(Text, nullable=True)
+    before_json = Column(Text, nullable=True)  # estado antes del cambio (JSON), cuando aplica
+    after_json = Column(Text, nullable=True)   # estado después del cambio (JSON), cuando aplica
+
+
+class RecoveryCode(Base):
+    """Códigos de recuperación de un solo uso para el 2FA de un usuario"""
+    __tablename__ = "recovery_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    code_hash = Column(String(64), nullable=False, index=True)
+    used = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=dt.datetime.utcnow)

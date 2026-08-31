@@ -39,6 +39,7 @@ def update_settings(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin),
 ):
+    before = _get_all(db)
     data = payload.model_dump()
     for key, value in data.items():
         # No sobreescribir la contraseña de correo si viene vacía (para no borrarla sin querer)
@@ -51,7 +52,8 @@ def update_settings(
         else:
             db.add(models.Setting(key=key, value=str_value))
 
-    audit(db, current_user.username, "settings_update", "Actualizó la configuración global")
+    after = _get_all(db)
+    audit(db, current_user.username, "settings_update", "Actualizó la configuración global", before=before, after=after)
     db.commit()
 
     if data.get("update_interval"):

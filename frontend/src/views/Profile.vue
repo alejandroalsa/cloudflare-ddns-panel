@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
-import { api, type TwoFASetup } from "@/lib/api";
+import { api, type TwoFASetup, type TwoFAConfirmResult, type RecoveryCodesOut } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import AppLayout from "@/components/AppLayout.vue";
 import Card from "@/components/ui/Card.vue";
@@ -15,7 +15,8 @@ import Label from "@/components/ui/Label.vue";
 import Badge from "@/components/ui/Badge.vue";
 import Dialog from "@/components/ui/Dialog.vue";
 import ThemeToggle from "@/components/ui/ThemeToggle.vue";
-import { ShieldCheck, Eye, UserCircle, Save, Palette, Smartphone, X, Check } from "lucide-vue-next";
+import RecoveryCodesDialog from "@/components/ui/RecoveryCodesDialog.vue";
+import { ShieldCheck, Eye, UserCircle, Save, Palette, Smartphone, X, Check, KeyRound } from "lucide-vue-next";
 
 const auth = useAuthStore();
 
@@ -51,18 +52,13 @@ async function save() {
   }
 }
 
-// ---------- 2FA ----------
+// ---------- 2FA: activar ----------
 const showSetupDialog = ref(false);
 const setupData = ref<TwoFASetup | null>(null);
 const confirmCode = ref("");
 const setupError = ref("");
 const settingUp2fa = ref(false);
 const confirming2fa = ref(false);
-
-const showDisableDialog = ref(false);
-const disablePassword = ref("");
-const disableError = ref("");
-const disabling2fa = ref(false);
 
 async function startSetup2fa() {
   settingUp2fa.value = true;
@@ -83,15 +79,23 @@ async function confirmSetup2fa() {
   confirming2fa.value = true;
   setupError.value = "";
   try {
-    await api.post("/auth/2fa/confirm", { code: confirmCode.value });
+    const { data } = await api.post<TwoFAConfirmResult>("/auth/2fa/confirm", { code: confirmCode.value });
     await auth.fetchMe();
     showSetupDialog.value = false;
+    recoveryCodes.value = data.recovery_codes;
+    showRecoveryDialog.value = true;
   } catch (e: any) {
     setupError.value = e?.response?.data?.detail || "Código incorrecto";
   } finally {
     confirming2fa.value = false;
   }
 }
+
+// ---------- 2FA: desactivar (propia cuenta) ----------
+const showDisableDialog = ref(false);
+const disablePassword = ref("");
+const disableError = ref("");
+const disabling2fa = ref(false);
 
 async function disable2fa() {
   disabling2fa.value = true;
@@ -105,6 +109,31 @@ async function disable2fa() {
     disableError.value = e?.response?.data?.detail || "No se pudo desactivar";
   } finally {
     disabling2fa.value = false;
+  }
+}
+
+// ---------- Códigos de recuperación ----------
+const showRecoveryDialog = ref(false);
+const recoveryCodes = ref<string[]>([]);
+
+const showRegenDialog = ref(false);
+const regenPassword = ref("");
+const regenError = ref("");
+const regenerating = ref(false);
+
+async function regenerateCodes() {
+  regenerating.value = true;
+  regenError.value = "";
+  try {
+    const { data } = await api.post<RecoveryCodesOut>("/auth/2fa/regenerate-codes", { password: regenPassword.value });
+    showRegenDialog.value = false;
+    regenPassword.value = "";
+    recoveryCodes.value = data.codes;
+    showRecoveryDialog.value = true;
+  } catch (e: any) {
+    regenError.value = e?.response?.data?.detail || "No se pudieron regenerar los códigos";
+  } finally {
+    regenerating.value = false;
   }
 }
 
@@ -158,7 +187,7 @@ onMounted(loadFromStore);
         <CardTitle class="flex items-center gap-2"><Smartphone class="h-4 w-4" /> Verificación en dos pasos (2FA)</CardTitle>
         <CardDescription>Añade una capa extra de seguridad con una app de autenticación (Google Authenticator, Authy...)</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent class="space-y-3">
         <div class="flex items-center justify-between rounded-[5px] border px-3 py-2">
           <Badge v-if="auth.user?.totp_enabled" variant="success" class="gap-1">
             <ShieldCheck class="h-3.5 w-3.5" /> Activada
@@ -174,6 +203,16 @@ onMounted(loadFromStore);
             Desactivar 2FA
           </Button>
         </div>
+
+        <Button
+          v-if="auth.user?.totp_enabled"
+          variant="outline"
+          size="sm"
+          class="w-full"
+          @click="showRegenDialog = true"
+        >
+          <KeyRound class="h-4 w-4" /> Regenerar códigos de recuperación
+        </Button>
       </CardContent>
     </Card>
 
@@ -242,5 +281,31 @@ onMounted(loadFromStore);
         </div>
       </form>
     </Dialog>
+
+    <!-- Diálogo: regenerar códigos -->
+    <Dialog v-model:open="showRegenDialog">
+      <h2 class="mb-1 text-lg font-semibold">Regenerar códigos de recuperación</h2>
+      <p class="mb-4 text-sm text-muted-foreground">
+        Esto invalida los códigos anteriores. Introduce tu contraseña para confirmar.
+      </p>
+      <form class="space-y-4" @submit.prevent="regenerateCodes">
+        <div class="space-y-1.5">
+          <Label>Contraseña</Label>
+          <PasswordInput v-model="regenPassword" required />
+        </div>
+        <p v-if="regenError" class="text-sm text-destructive">{{ regenError }}</p>
+        <div class="flex justify-end gap-2">
+          <Button type="button" variant="outline" @click="showRegenDialog = false">
+            <X class="h-4 w-4" /> Cancelar
+          </Button>
+          <Button type="submit" :disabled="regenerating">
+            <KeyRound class="h-4 w-4" /> {{ regenerating ? "Generando..." : "Regenerar" }}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+
+    <!-- Diálogo: mostrar códigos de recuperación (tras activar o regenerar) -->
+    <RecoveryCodesDialog v-model:open="showRecoveryDialog" :codes="recoveryCodes" />
   </AppLayout>
 </template>
